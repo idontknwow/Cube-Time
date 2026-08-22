@@ -1,5 +1,6 @@
 import { scrambleFor, EVENTS, EVENT_LIST, minimumFor } from './scramble.js';
 import { LEVELS, NOTATION } from './learn.js';
+import { afterSequence, netSvg, solved, applyMove, tokensOf, clone, CAN_DRAW } from './cube.js';
 
 /* ------------------------------------------------------------------ state */
 
@@ -377,6 +378,15 @@ async function uploadPenalty(solve) {
 function nextScramble() {
   state.scramble = scrambleFor(state.event);
   $('scramble').textContent = state.scramble;
+  drawScramble();
+}
+
+/* Show what you are actually about to solve. Only for the events this
+   drawing is honest about -- a 3x3 net would be a lie for 2x2 or 4x4. */
+function drawScramble() {
+  const holder = $('scramble-cube');
+  if (!CAN_DRAW.has(state.event)) { holder.innerHTML = ''; return; }
+  holder.innerHTML = netSvg(afterSequence(state.scramble));
 }
 
 /* ------------------------------------------------------------ render: timer */
@@ -422,7 +432,8 @@ function renderLearn() {
         <h3>${esc(step.title)}</h3>
         <p>${esc(step.body)}</p>
         ${step.algs.map((a) => `
-          <div class="alg">
+          <div class="alg" data-moves="${esc(a.moves)}" role="button" tabindex="0"
+               title="Click to watch this run on a cube">
             <span class="alg-name">${esc(a.name)}</span>
             <span class="alg-moves">${esc(a.moves)}</span>
             ${a.note ? `<span class="alg-note">${esc(a.note)}</span>` : ''}
@@ -433,6 +444,89 @@ function renderLearn() {
 
   $('notation').innerHTML = NOTATION
     .map(([term, meaning]) => `<dt>${esc(term)}</dt><dd>${esc(meaning)}</dd>`).join('');
+}
+
+/* ------------------------------------------------------- algorithm player */
+
+let player = null;   // { moves, index, state, timer, host }
+
+function stopPlayer() {
+  if (player && player.timer) clearInterval(player.timer);
+  if (player) {
+    player.host.remove();
+    player.alg.classList.remove('is-open');
+  }
+  player = null;
+}
+
+function openPlayer(algEl) {
+  const sequence = algEl.dataset.moves;
+  if (player && player.alg === algEl) { stopPlayer(); return; }
+  stopPlayer();
+
+  const host = document.createElement('div');
+  host.className = 'alg-player';
+  algEl.classList.add('is-open');
+  algEl.after(host);
+
+  player = { alg: algEl, host, moves: tokensOf(sequence), index: 0, state: solved(), timer: null };
+  paintPlayer();
+
+  host.addEventListener('click', (e) => {
+    const what = e.target.dataset && e.target.dataset.player;
+    if (!what) return;
+    e.stopPropagation();
+    if (what === 'step') { pausePlayer(); stepPlayer(); }
+    if (what === 'reset') { pausePlayer(); resetPlayer(); }
+    if (what === 'play') togglePlay();
+  });
+}
+
+function resetPlayer() {
+  player.index = 0;
+  player.state = solved();
+  paintPlayer();
+}
+
+function stepPlayer() {
+  if (!player) return false;
+  if (player.index >= player.moves.length) { resetPlayer(); return false; }
+  applyMove(player.state, player.moves[player.index]);
+  player.index += 1;
+  paintPlayer();
+  return true;
+}
+
+function pausePlayer() {
+  if (player && player.timer) { clearInterval(player.timer); player.timer = null; paintPlayer(); }
+}
+
+function togglePlay() {
+  if (!player) return;
+  if (player.timer) { pausePlayer(); return; }
+  if (player.index >= player.moves.length) resetPlayer();
+  player.timer = setInterval(() => {
+    if (player.index >= player.moves.length) { pausePlayer(); return; }
+    stepPlayer();
+  }, 520);
+  paintPlayer();
+}
+
+function paintPlayer() {
+  if (!player) return;
+  const track = player.moves.map((move, i) => {
+    const cls = i === player.index ? 'now' : i < player.index ? 'done' : '';
+    return `<span class="${cls}">${esc(move)}</span>`;
+  }).join('');
+  const atEnd = player.index >= player.moves.length;
+  player.host.innerHTML = `
+    ${netSvg(player.state)}
+    <div class="track">${track}</div>
+    <div class="controls">
+      <button class="mini" data-player="play">${player.timer ? 'Pause' : atEnd ? 'Replay' : 'Play'}</button>
+      <button class="mini" data-player="step">Step</button>
+      <button class="mini" data-player="reset">Reset</button>
+    </div>`;
 }
 
 /* ---------------------------------------------------------- render: compete */
@@ -756,6 +850,7 @@ async function restoreSession() {
 /* ------------------------------------------------------------------ views */
 
 function show(view) {
+  if (view !== 'learn') stopPlayer();
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('is-on', v.id === 'view-' + view));
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('is-on', t.dataset.view === view));
   if (view === 'compete') { renderDaily(); renderLeaderboard(); }
@@ -851,9 +946,22 @@ function init() {
   });
 
   // learn
+  $('lesson').addEventListener('click', (e) => {
+    const alg = e.target.closest('.alg');
+    if (alg) openPlayer(alg);
+  });
+  $('lesson').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const alg = e.target.closest('.alg');
+    if (!alg) return;
+    e.preventDefault();
+    openPlayer(alg);
+  });
+
   $('level-picker').onclick = (e) => {
     if (!e.target.dataset.level) return;
     state.level = e.target.dataset.level;
+    stopPlayer();
     renderLearn();
   };
 

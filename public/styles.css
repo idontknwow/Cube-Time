@@ -381,3 +381,35 @@ body.timing .stats, body.timing .session, body.timing .after { visibility: hidde
   font-variant-numeric: tabular-nums; min-height: 1.9rem;
 }
 .card .cost { color: var(--muted); font-size: .78rem; }
+
+/* ---- the cube diagram ------------------------------------------------ */
+
+.cube-holder { display: flex; justify-content: center; margin: 0 0 .75rem; }
+.cube-holder:empty { display: none; }
+.cube-net { width: 100%; max-width: 240px; height: auto; display: block; }
+
+/* An algorithm you can watch, rather than a line of text to be trusted. */
+.alg { cursor: pointer; }
+.alg:hover { border-color: var(--accent); }
+.alg.is-open { border-color: var(--accent); }
+
+.alg-player {
+  border: 1px solid var(--accent); border-top: 0;
+  border-radius: 0 0 8px 8px; padding: .75rem;
+  margin: -.4rem 0 .6rem; background: var(--panel);
+}
+.alg-player .cube-net { max-width: 210px; margin: 0 auto .6rem; }
+.alg-player .controls { display: flex; gap: .4rem; justify-content: center; flex-wrap: wrap; }
+.alg-player .track {
+  display: flex; flex-wrap: wrap; gap: .3rem; justify-content: center;
+  margin-bottom: .6rem; font-family: ui-monospace, Menlo, monospace; font-size: .85rem;
+}
+.alg-player .track span {
+  padding: .1rem .35rem; border-radius: 5px; color: var(--muted);
+  border: 1px solid transparent;
+}
+.alg-player .track span.done { color: var(--ink); }
+.alg-player .track span.now {
+  color: var(--bg); background: var(--accent); border-color: var(--accent);
+  font-weight: 700;
+}
