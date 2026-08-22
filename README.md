@@ -67,7 +67,23 @@ session list can be removed by clicking it, and a toast offers Undo for a few
 seconds afterwards. Removing or DNF-ing a solve is pushed to the server too, so
 an accidental 0.35-second "record" does not sit on the public leaderboard --
 records are rebuilt from what is left, and are allowed to get worse again.
-A solve shorter than 200ms is treated as a stray double-press and ignored.
+Times too fast to be real are refused outright, because a misclick that lands
+on the leaderboard is worse than a lost solve. The floor is per event, since a
+single one would be useless -- 5 seconds is a stricter bar than the 3x3 world
+record of 3.13s, but ordinary 2x2 solves are faster than that:
+
+| Event | Not counted below | World record |
+| --- | --- | --- |
+| 3x3 | 5.00s | 3.13s |
+| 3x3 one-handed | 5.00s | 5.66s |
+| 2x2 | 0.40s | 0.43s |
+| 4x4 | 10.00s | 15.71s |
+
+The browser refuses these before saving anything and the server refuses them
+again, so a hand-written request cannot get one through either. Records banked
+before the floors existed are dropped the next time the account is read, and
+the personal best is recalculated from what is left. If you change the numbers,
+change them in both `MIN_SOLVE` tables -- `server.py` and `public/scramble.js`.
 
 Session statistics use the WCA rules: ao5 and ao12 drop the best and worst
 solve and mean the rest, and a single DNF counts as the discarded worst.

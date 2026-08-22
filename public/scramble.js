@@ -47,3 +47,16 @@ export const EVENT_LIST = [
 ];
 
 export const EVENTS = Object.fromEntries(EVENT_LIST);
+
+/* A time this fast is a stopped-too-early misclick, not a solve. The records
+   differ enormously between events, so a single flat floor is no good -- 5s
+   would throw away most legitimate 2x2 solves. Keep in step with MIN_SOLVE in
+   server.py, which enforces the same rule for anything that reaches it. */
+export const MIN_SOLVE = {
+  '333': 5000,      // deliberately strict; the world record is 3.13s
+  '333oh': 5000,    // world record 5.66s
+  '222': 400,       // world record 0.43s -- 2x2 really is this fast
+  '444': 10000,     // world record 15.71s
+};
+
+export const minimumFor = (event) => MIN_SOLVE[event] ?? 5000;

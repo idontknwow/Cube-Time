@@ -1,4 +1,4 @@
-import { scrambleFor, EVENTS, EVENT_LIST } from './scramble.js';
+import { scrambleFor, EVENTS, EVENT_LIST, minimumFor } from './scramble.js';
 import { LEVELS, NOTATION } from './learn.js';
 
 /* ------------------------------------------------------------------ state */
@@ -247,8 +247,6 @@ function inspectionPenalty() {
   return OK;
 }
 
-const MIN_SOLVE_MS = 200;   // the server rejects anything shorter, so we do too
-
 function stopSolve() {
   const ms = Math.round(performance.now() - startedAt);
   const pen = inspectionPenalty();
@@ -257,10 +255,12 @@ function stopSolve() {
   wasInspecting = false;
   hint(IDLE_HINT);
 
-  if (ms < MIN_SOLVE_MS) {   // a stray double-press, not a solve
+  const floor = minimumFor(state.event);
+  if (ms < floor) {          // faster than anyone alive: a misclick, not a solve
     setTime('0.000');
     $('after').hidden = true;
-    toast('Ignored — the timer barely ran.');
+    toast(`Not counted — ${EVENTS[state.event]} solves under `
+      + `${(floor / 1000).toFixed(2)}s don't count.`);
     return;
   }
   setTime(null, ms);
@@ -713,7 +713,10 @@ async function syncSession() {
     const data = await post('sync', { solves: state.session.slice(-500) });
     state.user = data.user;
     renderYou();
-    toast(data.added ? `Synced ${data.added} solve${data.added === 1 ? '' : 's'}.` : 'Everything already synced.');
+    const parts = [];
+    if (data.added) parts.push(`Synced ${plural(data.added, 'solve')}.`);
+    if (data.skipped) parts.push(`Left out ${plural(data.skipped, 'impossible time')}.`);
+    toast(parts.join(' ') || 'Everything already synced.');
   } catch (err) {
     toast(err.message, true);
   }

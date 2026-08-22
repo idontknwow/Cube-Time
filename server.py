@@ -45,6 +45,22 @@ EVENTS = {
     "333oh": "3x3 One-Handed",
 }
 
+# A time this fast is a stopped-too-early misclick, not a solve. The records
+# differ enormously between events, so a single flat floor is no good -- 5s
+# would throw away most legitimate 2x2 solves. Keep in step with MIN_SOLVE in
+# public/scramble.js, which gives the same answer before a solve is even saved.
+MIN_SOLVE = {
+    "333": 5000,      # deliberately strict; the world record is 3.13s
+    "333oh": 5000,    # world record 5.66s
+    "222": 400,       # world record 0.43s -- 2x2 really is this fast
+    "444": 10000,     # world record 15.71s
+}
+FALLBACK_MIN = 5000
+
+
+def minimum_for(event):
+    return MIN_SOLVE.get(event, FALLBACK_MIN)
+
 # Themes buyable with cubies. "midnight" is free and always owned.
 # The store. Each category has one free default that everybody owns, so a new
 # account is never staring at a wall of locked things. The server only knows
@@ -253,6 +269,15 @@ def migrate_user(user):
         chosen = user["wearing"].get(category)
         if chosen not in SHOP[category]["items"] or chosen not in have:
             user["wearing"][category] = default
+
+    # Records banked before the minimums existed have to go too, or an
+    # impossible time keeps its place on the leaderboard forever.
+    solves = user.get("solves", [])
+    keep = [s for s in solves if s.get("ms", 0) >= minimum_for(s.get("event", "333"))]
+    if len(keep) != len(solves):
+        user["solves"] = keep
+        for event in EVENTS:
+            recompute_prs(user, event)
     return user
 
 
@@ -604,10 +629,15 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(400, "Sync at most 500 solves at a time.")
         known = set(s.get("id") for s in user.get("solves", []))
         added, events = 0, set()
+        skipped = 0
         for item in raw:
             if not isinstance(item, dict):
                 continue
-            solve = self.clean_solve(item)
+            try:
+                solve = self.clean_solve(item)
+            except ApiError:
+                skipped += 1      # one impossible time must not block the rest
+                continue
             if solve["id"] in known:
                 continue
             known.add(solve["id"])
@@ -620,21 +650,27 @@ class Handler(BaseHTTPRequestHandler):
             recompute_prs(user, event)
         user["cubies"] = user.get("cubies", 0) + added
         save_db(db)
-        return {"user": public_user(user, full=True), "added": added}
+        return {"user": public_user(user, full=True), "added": added,
+                "skipped": skipped}
 
     def clean_solve(self, body):
         try:
             ms = int(body.get("ms"))
         except (TypeError, ValueError):
             raise ApiError(400, "A solve needs a time in milliseconds.")
-        if ms < 200 or ms > 60 * 60 * 1000:
+        event = body.get("event") or "333"
+        if event not in EVENTS:
+            raise ApiError(400, "Unknown event.")
+        floor = minimum_for(event)
+        if ms < floor:
+            raise ApiError(400, "%s solves under %.2f seconds do not count - "
+                                "that is a misclick, not a solve."
+                                % (EVENTS[event], floor / 1000.0))
+        if ms > 60 * 60 * 1000:
             raise ApiError(400, "That time is out of range.")
         pen = body.get("pen", OK)
         if pen not in (OK, PLUS2, DNF):
             pen = OK
-        event = body.get("event") or "333"
-        if event not in EVENTS:
-            raise ApiError(400, "Unknown event.")
         scramble = (body.get("scramble") or "")[:200]
         return {
             "id": (body.get("id") or secrets.token_hex(8))[:32],
@@ -654,6 +690,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(400, "Unknown metric.")
         rows = []
         for user in db["users"].values():
+            migrate_user(user)
             value = user.get("prs", {}).get(event, {}).get(metric)
             if value is None:
                 continue
