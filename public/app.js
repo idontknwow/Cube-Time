@@ -407,7 +407,9 @@ function viewOf(host) {
 function paintCube(host, cubeState, extra = {}) {
   if (cubeState) host.__state = cubeState;
   const view = viewOf(host);
-  host.innerHTML = cubeSvg(host.__state, { ...view, ...extra });
+  // Shop cards force their own style so they can show what they are selling.
+  const style = extra.style || wearing('cube_style');
+  host.innerHTML = cubeSvg(host.__state, { ...view, ...extra, style });
   if (!host.__draggable) makeDraggable(host);
 }
 
@@ -1100,6 +1102,7 @@ function previewFor(category, id) {
     return `<div class="preview">${nameHtml(name, id)}</div>`;
   }
   if (category === 'finish') return `<div class="preview fx" data-finish-demo="${esc(id)}">tap to see</div>`;
+  if (category === 'cube_style') return `<div class="cube-holder shop-cube" data-cube-style="${esc(id)}"></div>`;
   return '';
 }
 
@@ -1120,6 +1123,11 @@ function paintSwatches() {
   // sets --timer-font for its own subtree, whatever the page is wearing.
   document.querySelectorAll('[data-font-preview]').forEach((box) => {
     box.parentElement.dataset.font = box.dataset.fontPreview;
+  });
+  // Cube cards show a real cube built the way that card is selling it.
+  document.querySelectorAll('[data-cube-style]').forEach((box) => {
+    box.__extra = { style: box.dataset.cubeStyle };
+    paintCube(box, afterSequence("R U R' U' F' U F"), box.__extra);
   });
 }
 
@@ -1343,6 +1351,7 @@ function init() {
       applyCosmetics();
       renderYou();
       renderTimer();
+      if (category === 'cube_style') drawScramble();
       if (category === 'finish') playFinish(item, button.closest('.card'));
       toast(owned ? 'Equipped.' : `Unlocked ${state.shop[category].items[item].name}!`);
     } catch (err) {

@@ -114,6 +114,14 @@ SHOP = {
             "rainbow": {"name": "Rainbow", "cost": 500},
         },
     },
+    "cube_style": {
+        "label": "Cubes",
+        "note": "What the cube in the app is made of.",
+        "items": {
+            "stickered": {"name": "Stickered", "cost": 0},
+            "speedcube": {"name": "Speedcube", "cost": 450},
+        },
+    },
     "finish": {
         "label": "Finish animations",
         "note": "What happens the moment you stop the timer.",

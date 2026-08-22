@@ -214,8 +214,32 @@ export function readToken(token) {
    away the cubie is. Cubies never pass through each other, so sorting them
    as wholes is enough; sorting loose squares is what goes wrong.          */
 
-const CUBIE = 0.47;            // half a cubie, leaving a hairline between them
-const PLASTIC = '#131316';
+/* Two ways of building a cube.
+
+   A stickered cube is black plastic with a coloured square stuck on each
+   outward face, so every sticker is ringed by body colour.
+
+   A stickerless speedcube has no stickers at all: the plastic of the piece is
+   itself coloured, right to the edge, with rounded corners and a thin dark
+   channel where one piece meets the next. The colours are a little louder than
+   vinyl too. Getting that right means changing how a face is drawn, not just
+   deleting a border. */
+const STYLES = {
+  stickered: { cubie: 0.47, plastic: '#131316', tile: false },
+  speedcube: { cubie: 0.452, plastic: '#0f0f12', tile: true },
+};
+
+const SPEED_COLOURS = {
+  U: '#fdfdfd',
+  D: '#ffd60a',
+  F: '#0fbe4c',
+  B: '#1466ea',
+  R: '#f6362a',
+  L: '#ff8a12',
+};
+
+/** Knock an already-shaded rgb() down, for the chamfer round a moulded face. */
+const darken = (rgb, k) => rgb.replace(/\d+/g, (n) => Math.round(+n * k));
 const CAMERA = 8.4;            // eye close enough for the near face to loom
 const LENS = 21;
 
@@ -255,6 +279,11 @@ for (let x = -1; x <= 1; x++) {
  *   dim         fade back everything the turn does not carry
  */
 export function cubeSvg(state, options = {}) {
+  const style = STYLES[options.style] ? options.style : 'stickered';
+  const kit = STYLES[style];
+  const palette = kit.tile ? SPEED_COLOURS : COLOURS;
+  const CUBIE = kit.cubie;
+  const PLASTIC = kit.plastic;
   const yaw = options.yaw === undefined ? -0.62 : options.yaw;
   const pitch = options.pitch === undefined ? 0.5 : options.pitch;
   const turn = options.turn || null;
@@ -296,7 +325,7 @@ export function cubeSvg(state, options = {}) {
       let fill = PLASTIC;
       if (outside) {
         const index = (dot(home, row) + 1) * 3 + (dot(home, col) + 1);
-        fill = shade(COLOURS[state[face][index]], dir);
+        fill = shade(palette[state[face][index]], dir);
       }
       panels.push({
         seat: seat[2],
@@ -316,16 +345,33 @@ export function cubeSvg(state, options = {}) {
     if (!panel.outside) {
       return `<polygon points="${outline}" fill="${PLASTIC}"/>`;
     }
-    // The plastic sits behind, and the sticker is inset within it -- which is
-    // what draws the dark grid between one sticker and the next.
+    const fade = panel.faded ? ' opacity="0.38"' : '';
     const mid = panel.corners.reduce((a, p) => [a[0] + p[0] / 4, a[1] + p[1] / 4], [0, 0]);
-    const sticker = panel.corners
-      .map((p) => [mid[0] + (p[0] - mid[0]) * 0.82, mid[1] + (p[1] - mid[1]) * 0.82])
+    const pull = (k) => panel.corners
+      .map((p) => [mid[0] + (p[0] - mid[0]) * k, mid[1] + (p[1] - mid[1]) * k])
       .map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
+
+    if (kit.tile) {
+      // Stickerless: the piece itself is coloured, right through. What reads as
+      // a border on a real one is the moulded edge of the plastic catching less
+      // light, so the face is laid down twice -- a darker chamfer at full size,
+      // and the face proper inset within it with the corners taken off.
+      const k = 0.86;
+      const side = (Math.hypot(panel.corners[1][0] - panel.corners[0][0],
+                               panel.corners[1][1] - panel.corners[0][1])
+                  + Math.hypot(panel.corners[2][0] - panel.corners[1][0],
+                               panel.corners[2][1] - panel.corners[1][1])) / 2;
+      const grow = (side * (1 - k)).toFixed(3);
+      return `<polygon points="${outline}" fill="${darken(panel.fill, 0.58)}"${fade}/>`
+        + `<polygon points="${pull(k)}" fill="${panel.fill}"`
+        + ` stroke="${panel.fill}" stroke-width="${grow}" stroke-linejoin="round"${fade}/>`;
+    }
+
+    // Stickered: plastic behind, sticker inset within it, and the gap between
+    // them is what draws the dark grid from one sticker to the next.
     return `<polygon points="${outline}" fill="${PLASTIC}"/>`
-      + `<polygon points="${sticker}" fill="${panel.fill}"`
-      + ` stroke="${panel.fill}" stroke-width="0.09" stroke-linejoin="round"`
-      + (panel.faded ? ' opacity="0.38"' : '') + '/>';
+      + `<polygon points="${pull(0.82)}" fill="${panel.fill}"`
+      + ` stroke="${panel.fill}" stroke-width="0.09" stroke-linejoin="round"${fade}/>`;
   }).join('');
 
   return `<svg class="cube3d" viewBox="-10.5 -10.5 21 21" xmlns="http://www.w3.org/2000/svg"`

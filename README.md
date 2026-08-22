@@ -149,6 +149,10 @@ across every angle.
 cosmetics in four categories:
 
 - **Themes** — the colours of the whole app.
+- **Cubes** — what the cube in the app is made of. The default is stickered:
+  black plastic with a coloured square stuck on each face. The speedcube is
+  stickerless, so the piece itself is coloured right to its edge, with brighter
+  plastic and only the moulded chamfer between one piece and the next.
 - **Timer fonts** — the face the big number is set in. System fonts only, so
   nothing is downloaded and it all still works offline.
 - **Name styles** — gold, embossed, outlined, neon, rainbow. These travel with
@@ -161,7 +165,9 @@ Each category has one free default, so a new account is never looking at a wall
 of locked things. Signed-out visitors can browse the whole store.
 
 Adding a cosmetic is two edits: an entry in `SHOP` in `server.py` (id, name,
-cost) and a rule in the cosmetics section at the bottom of `public/styles.css`.
+cost) and a rule in the cosmetics section at the bottom of `public/styles.css`
+-- except a cube, which is a `STYLES` entry in `public/cube.js`, since it
+changes how a face is drawn rather than what colour it is.
 The server only ever stores which id you are wearing — what it looks like is
 entirely the stylesheet's business.
 
