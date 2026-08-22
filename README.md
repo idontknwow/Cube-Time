@@ -119,15 +119,22 @@ refused too, which catches a drifting clock as readily as someone trying it on.
 three dimensions, so you can check you scrambled it right. Drag any cube to
 look at it from another angle; double-click to put it back.
 
-In Learn, every algorithm is clickable and *runs*, one layer swinging round at
-a time -- watching which way a layer goes is the whole point, and a picture
-that jumps between two positions tells you nothing. And every symbol in the
+In Learn, every algorithm opens on **the case it solves**, not on a solved cube:
+an algorithm is an answer, and showing the answer first tells you nothing about
+the question. The case is simply the algorithm undone, so playing it through
+solves the cube. It runs one layer swinging round at a time -- watching which
+way a layer goes is the whole point, and a picture that jumps between two
+positions tells you nothing.
+
+A handful of algorithms begin with a whole-cube rotation, and their case comes
+up with a different colour on top. That is not a bug to tidy away: it is the
+only orientation those algorithms actually solve, which is checked. And every symbol in the
 notation has its own cube, frozen part-way through its own move with the rest
 faded back, so you can see at a glance which slab of the cube it takes with it.
 Tap one to watch it through.
 
-The drawing is 3x3 only; it would be a lie for 2x2 or 4x4, so those show
-nothing.
+Every event gets its own cube -- 2x2, 3x3 and 4x4 all draw at the same size on
+the page, with the pieces correspondingly big or small.
 
 `public/cube.js` holds all of this. The cube is built as twenty-six little
 cubies rather than fifty-four loose stickers, which is what makes it read as a
@@ -137,9 +144,13 @@ meets the outside world, plastic everywhere else -- painted furthest-away
 first. Sorting whole cubies is what works; sorting loose squares is what goes
 wrong once a layer is halfway round.
 
+The engine works on any size. A turn is a set of layer depths through one
+piece of machinery -- depth 0 is the face, a wide turn is depths 0 and 1, a
+whole-cube rotation is every depth at once -- so 2x2 and 4x4 fall out of the
+same code as 3x3 rather than needing their own.
+
 A move can be drawn half-finished because a sticker is a position in space
-rather than a cell in a grid: the cubies in that layer are simply spun, and a
-wide turn is nothing more than a more generous test of which ones belong. The
+rather than a cell in a grid: the cubies in that layer are simply spun. The
 drawing is checked against the move engine rather than by eye -- a move drawn
 at full swing has to put every sticker exactly where the engine says it goes,
 across every angle.

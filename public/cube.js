@@ -1,17 +1,21 @@
-// A 3x3 cube, as state plus a move engine, plus a flat drawing of it.
+// A cube of any size, as state plus a move engine, plus a drawing of it.
 //
-// Stickers are held as six faces of nine, each index read left-to-right and
-// top-to-bottom while looking straight at that face:
+// Stickers are held as six faces of N x N, each index read left-to-right and
+// top-to-bottom while looking straight at that face. For a 3x3:
 //
 //     0 1 2
 //     3 4 5
 //     6 7 8
 //
-// A turn does two things: it spins that face's own nine stickers, and it
-// cycles four strips of three around the sides. Everything else -- wide
-// turns, slices, whole-cube rotations -- is built out of those.
+// A turn does two things: it cycles four strips around the sides, and -- when
+// it is the outermost layer -- spins that face's own stickers. Everything
+// else (wide turns, slices, whole-cube rotations) is just a different set of
+// layer depths through the same machinery, which is why 2x2 and 4x4 come out
+// of it for free.
 
 export const FACES = ['U', 'R', 'F', 'D', 'L', 'B'];
+
+const OPPOSITE = { U: 'D', D: 'U', L: 'R', R: 'L', F: 'B', B: 'F' };
 
 const COLOURS = {
   U: '#f7f7f7',   // white
@@ -22,11 +26,23 @@ const COLOURS = {
   L: '#ec8118',   // orange
 };
 
-export function solved() {
+/* Stickerless plastic is a little louder than vinyl. */
+const SPEED_COLOURS = {
+  U: '#fdfdfd', D: '#ffd60a', F: '#0fbe4c',
+  B: '#1466ea', R: '#f6362a', L: '#ff8a12',
+};
+
+/** How big a cube each event is solved on. */
+export const EVENT_SIZE = { '222': 2, '333': 3, '444': 4, '333oh': 3 };
+
+export function solved(n = 3) {
   const state = {};
-  FACES.forEach((face) => { state[face] = Array(9).fill(face); });
+  FACES.forEach((face) => { state[face] = Array(n * n).fill(face); });
   return state;
 }
+
+/** The size of a cube, read back off the state itself. */
+export const sizeOf = (state) => Math.round(Math.sqrt(state.U.length));
 
 export const clone = (state) => {
   const copy = {};
@@ -34,127 +50,178 @@ export const clone = (state) => {
   return copy;
 };
 
-/* Each entry: the face whose own stickers spin, and the four side strips.
-   Contents travel from one strip to the next, and from the last back to the
-   first. Slices (M, E, S) spin no face of their own. */
-const MOVES = {
-  U: { spin: 'U', cycle: [['F0', 'F1', 'F2'], ['L0', 'L1', 'L2'], ['B0', 'B1', 'B2'], ['R0', 'R1', 'R2']] },
-  D: { spin: 'D', cycle: [['F6', 'F7', 'F8'], ['R6', 'R7', 'R8'], ['B6', 'B7', 'B8'], ['L6', 'L7', 'L8']] },
-  R: { spin: 'R', cycle: [['F2', 'F5', 'F8'], ['U2', 'U5', 'U8'], ['B6', 'B3', 'B0'], ['D2', 'D5', 'D8']] },
-  L: { spin: 'L', cycle: [['U0', 'U3', 'U6'], ['F0', 'F3', 'F6'], ['D0', 'D3', 'D6'], ['B8', 'B5', 'B2']] },
-  F: { spin: 'F', cycle: [['U6', 'U7', 'U8'], ['R0', 'R3', 'R6'], ['D2', 'D1', 'D0'], ['L8', 'L5', 'L2']] },
-  B: { spin: 'B', cycle: [['U2', 'U1', 'U0'], ['L0', 'L3', 'L6'], ['D6', 'D7', 'D8'], ['R8', 'R5', 'R2']] },
-  M: { spin: null, cycle: [['U1', 'U4', 'U7'], ['F1', 'F4', 'F7'], ['D1', 'D4', 'D7'], ['B7', 'B4', 'B1']] },
-  E: { spin: null, cycle: [['F3', 'F4', 'F5'], ['R3', 'R4', 'R5'], ['B3', 'B4', 'B5'], ['L3', 'L4', 'L5']] },
-  S: { spin: null, cycle: [['U3', 'U4', 'U5'], ['R1', 'R4', 'R7'], ['D5', 'D4', 'D3'], ['L7', 'L4', 'L1']] },
-};
+/* -- which stickers a turn moves ------------------------------------------
+   A strip is one row or column of a neighbouring face. Contents travel from
+   one strip to the next, and from the last back to the first. `depth` counts
+   inwards from the face being turned, so depth 0 is the face itself, depth 1
+   the layer behind it, and so on.                                          */
 
-/* Wide turns and rotations, as the basic turns they are made of. The pieces
-   of each are on separate layers and so never interfere, which is why a
-   prime can just invert every component and ignore their order. */
-const DERIVED = {
-  r: [['R', 1], ['M', 3]],
-  l: [['L', 1], ['M', 1]],
-  u: [['U', 1], ['E', 3]],
-  d: [['D', 1], ['E', 1]],
-  f: [['F', 1], ['S', 1]],
-  b: [['B', 1], ['S', 3]],
-  x: [['R', 1], ['M', 3], ['L', 3]],
-  y: [['U', 1], ['E', 3], ['D', 3]],
-  z: [['F', 1], ['S', 1], ['B', 3]],
-};
+const spot = (face, n, r, c) => face + (r * n + c);
 
-const at = (state, spot) => state[spot[0]][+spot.slice(1)];
-const put = (state, spot, value) => { state[spot[0]][+spot.slice(1)] = value; };
-
-function spinFace(state, face) {
-  const old = state[face].slice();
-  const order = [6, 3, 0, 7, 4, 1, 8, 5, 2];   // clockwise
-  state[face] = order.map((i) => old[i]);
+function rowOf(face, n, r, backwards) {
+  const out = [];
+  for (let c = 0; c < n; c++) out.push(spot(face, n, r, c));
+  return backwards ? out.reverse() : out;
 }
 
-function turnOnce(state, name) {
-  const move = MOVES[name];
-  if (!move) return;
-  if (move.spin) spinFace(state, move.spin);
+function colOf(face, n, c, backwards) {
+  const out = [];
+  for (let r = 0; r < n; r++) out.push(spot(face, n, r, c));
+  return backwards ? out.reverse() : out;
+}
 
-  const strips = move.cycle;
-  const carried = strips[strips.length - 1].map((spot) => at(state, spot));
-  for (let i = strips.length - 1; i > 0; i--) {
-    strips[i].forEach((spot, j) => put(state, spot, at(state, strips[i - 1][j])));
+function stripsFor(face, n, depth) {
+  const far = n - 1 - depth;
+  switch (face) {
+    case 'U': return [rowOf('F', n, depth), rowOf('L', n, depth),
+                      rowOf('B', n, depth), rowOf('R', n, depth)];
+    case 'D': return [rowOf('F', n, far), rowOf('R', n, far),
+                      rowOf('B', n, far), rowOf('L', n, far)];
+    case 'R': return [colOf('F', n, far), colOf('U', n, far),
+                      colOf('B', n, depth, true), colOf('D', n, far)];
+    case 'L': return [colOf('U', n, depth), colOf('F', n, depth),
+                      colOf('D', n, depth), colOf('B', n, far, true)];
+    case 'F': return [rowOf('U', n, far), colOf('R', n, depth),
+                      rowOf('D', n, depth, true), colOf('L', n, far, true)];
+    case 'B': return [rowOf('U', n, depth, true), colOf('L', n, depth),
+                      rowOf('D', n, far), colOf('R', n, far, true)];
+    default: return null;
   }
-  strips[0].forEach((spot, j) => put(state, spot, carried[j]));
 }
 
-/** Apply one move token, like R, U', Rw2, M, x. Unknown tokens are ignored. */
-export function applyMove(state, token) {
-  const parsed = /^([A-Za-z])(w?)('|2|')?$/.exec(token);
-  if (!parsed) return state;
-  let base = parsed[1];
-  const wide = parsed[2] === 'w';
-  const suffix = parsed[3] || '';
-  const times = suffix === '2' ? 2 : suffix === "'" ? 3 : 1;
+const at = (state, where) => state[where[0]][+where.slice(1)];
+const put = (state, where, value) => { state[where[0]][+where.slice(1)] = value; };
 
-  if (wide) base = base.toLowerCase();
-  const parts = DERIVED[base] || [[base, 1]];
-  parts.forEach(([name, count]) => {
-    const total = (count * times) % 4;
-    for (let i = 0; i < total; i++) turnOnce(state, name);
-  });
+function spinFace(state, n, face, clockwise) {
+  const was = state[face].slice();
+  const now = new Array(n * n);
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      now[r * n + c] = clockwise
+        ? was[(n - 1 - c) * n + r]
+        : was[c * n + (n - 1 - r)];
+    }
+  }
+  state[face] = now;
+}
+
+function quarterTurn(state, n, face, depth) {
+  const strips = stripsFor(face, n, depth);
+  if (!strips) return;
+  const carried = strips[strips.length - 1].map((where) => at(state, where));
+  for (let i = strips.length - 1; i > 0; i--) {
+    strips[i].forEach((where, j) => put(state, where, at(state, strips[i - 1][j])));
+  }
+  strips[0].forEach((where, j) => put(state, where, carried[j]));
+
+  // The outermost layer carries its own face round with it. Turning the layer
+  // at the far side is the opposite face turned the other way, which is what
+  // makes a whole-cube rotation fall out of "every depth at once".
+  if (depth === 0) spinFace(state, n, face, true);
+  if (depth === n - 1) spinFace(state, n, OPPOSITE[face], false);
+}
+
+/* -- reading a move -------------------------------------------------------- */
+
+const WIDE = { r: 'R', l: 'L', u: 'U', d: 'D', f: 'F', b: 'B' };
+const SLICE = { M: 'L', E: 'D', S: 'F' };   // each follows the face it names
+const WHOLE = { x: 'R', y: 'U', z: 'F' };
+
+/**
+ * Work out what a token actually turns on a cube of this size.
+ * Returns { face, depths, quarters } or null if it means nothing here.
+ */
+export function planMove(token, n = 3) {
+  const parsed = /^([A-Za-z])(w?)('|2)?$/.exec(token || '');
+  if (!parsed) return null;
+  const letter = parsed[1];
+  const wide = parsed[2] === 'w';
+  const quarters = parsed[3] === '2' ? 2 : parsed[3] === "'" ? -1 : 1;
+
+  let face = null;
+  let depths = null;
+
+  if (WHOLE[letter]) {
+    face = WHOLE[letter];
+    depths = Array.from({ length: n }, (_, i) => i);
+  } else if (SLICE[letter]) {
+    if (n < 3) return null;                       // a 2x2 has no middle
+    face = SLICE[letter];
+    depths = [Math.floor(n / 2)];                 // dead centre on odd cubes
+    if (n % 2 === 0) depths = [n / 2 - 1, n / 2]; // both inner layers on even
+  } else if (WIDE[letter]) {
+    face = WIDE[letter];
+    depths = [0, 1].filter((d) => d < n);
+  } else if (OPPOSITE[letter]) {
+    face = letter;
+    depths = wide ? [0, 1].filter((d) => d < n) : [0];
+  } else {
+    return null;
+  }
+  return { face, depths, quarters };
+}
+
+/** Apply one move token. Anything meaningless on this cube is ignored. */
+export function applyMove(state, token) {
+  const n = sizeOf(state);
+  const plan = planMove(token, n);
+  if (!plan) return state;
+  const times = ((plan.quarters % 4) + 4) % 4;
+  for (let i = 0; i < times; i++) {
+    plan.depths.forEach((depth) => quarterTurn(state, n, plan.face, depth));
+  }
   return state;
 }
 
 export const tokensOf = (sequence) => (sequence || '').trim().split(/\s+/).filter(Boolean);
 
 /** A fresh cube with the whole sequence applied. */
-export function afterSequence(sequence, from) {
-  const state = from ? clone(from) : solved();
+export function afterSequence(sequence, from, n = 3) {
+  const state = from ? clone(from) : solved(n);
   tokensOf(sequence).forEach((token) => applyMove(state, token));
   return state;
 }
 
-/* == drawing it in three dimensions =======================================
+/** The same moves undone, in reverse -- which turns an algorithm into its case. */
+export const invertToken = (token) =>
+  token.endsWith('2') ? token : token.endsWith("'") ? token.slice(0, -1) : token + "'";
 
-   The cube sits at the origin, three units across, so every sticker centre
-   lands on whole numbers from -1 to 1 and the faces sit at +/-1.5. Each
-   sticker is a square in space; we spin the whole lot to face the camera,
-   throw away the ones pointing away from it, and paint what is left back
-   to front.
+export const inverseOf = (sequence) =>
+  tokensOf(sequence).reverse().map(invertToken).join(' ');
 
-   Because a sticker is a real position rather than a cell in a grid, a turn
-   can be drawn halfway through simply by spinning the stickers that belong
-   to that layer -- which is what makes a move legible at a glance.        */
+/* == drawing it =============================================================
 
-const HALF = 1.5;
+   The cube is built as solid cubies rather than loose stickers. That matters
+   twice over: a cubie hides what is behind it, so nothing shows through from
+   the far side, and when a layer swings out you see the dark inside of the
+   cube, which is what makes it read as an object rather than a pattern.
 
-/* For each face: where its middle is, which way it points, and the two
-   directions its columns and rows run in. */
-const FRAME = {
-  U: { at: [0, HALF, 0], normal: [0, 1, 0], col: [1, 0, 0], row: [0, 0, 1] },
-  D: { at: [0, -HALF, 0], normal: [0, -1, 0], col: [1, 0, 0], row: [0, 0, -1] },
-  F: { at: [0, 0, HALF], normal: [0, 0, 1], col: [1, 0, 0], row: [0, -1, 0] },
-  B: { at: [0, 0, -HALF], normal: [0, 0, -1], col: [-1, 0, 0], row: [0, -1, 0] },
-  R: { at: [HALF, 0, 0], normal: [1, 0, 0], col: [0, 0, -1], row: [0, -1, 0] },
-  L: { at: [-HALF, 0, 0], normal: [-1, 0, 0], col: [0, 0, 1], row: [0, -1, 0] },
+   Cubies are one unit across whatever the size of the cube, and the whole
+   thing is scaled to a constant width at the end, so a 2x2 and a 4x4 arrive
+   the same size on the page with the pieces looking correspondingly big and
+   small.                                                                    */
+
+const STYLES = {
+  stickered: { cubie: 0.47, plastic: '#131316', tile: false },
+  speedcube: { cubie: 0.452, plastic: '#0f0f12', tile: true },
 };
 
-const add = (a, b, k = 1) => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
+/* For each face: which way it points, and the directions its columns and
+   rows run in when you look straight at it. */
+const FRAME = {
+  U: { normal: [0, 1, 0], col: [1, 0, 0], row: [0, 0, 1] },
+  D: { normal: [0, -1, 0], col: [1, 0, 0], row: [0, 0, -1] },
+  F: { normal: [0, 0, 1], col: [1, 0, 0], row: [0, -1, 0] },
+  B: { normal: [0, 0, -1], col: [-1, 0, 0], row: [0, -1, 0] },
+  R: { normal: [1, 0, 0], col: [0, 0, -1], row: [0, -1, 0] },
+  L: { normal: [-1, 0, 0], col: [0, 0, 1], row: [0, -1, 0] },
+};
 
-function stickerQuad(face, index) {
-  const { at, col, row } = FRAME[face];
-  const c = (index % 3) - 1;
-  const r = Math.floor(index / 3) - 1;
-  const middle = add(add(at, col, c), row, r);
-  return {
-    middle,
-    corners: [
-      add(add(middle, col, -0.5), row, -0.5),
-      add(add(middle, col, 0.5), row, -0.5),
-      add(add(middle, col, 0.5), row, 0.5),
-      add(add(middle, col, -0.5), row, 0.5),
-    ],
-  };
-}
+/* Which way each face's turn goes, as an axis and a direction. A slice or a
+   wide turn borrows the axis of the face it is named after, which is why the
+   animation never has to know about them separately. */
+const AXIS_OF = { R: 'x', L: 'x', U: 'y', D: 'y', F: 'z', B: 'z' };
+const SENSE_OF = { R: -1, L: 1, U: -1, D: 1, F: -1, B: 1 };
 
 const spinX = (p, a) => { const c = Math.cos(a), s = Math.sin(a);
   return [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]; };
@@ -162,97 +229,13 @@ const spinY = (p, a) => { const c = Math.cos(a), s = Math.sin(a);
   return [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c]; };
 const spinZ = (p, a) => { const c = Math.cos(a), s = Math.sin(a);
   return [p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2]]; };
-
 const SPIN = { x: spinX, y: spinY, z: spinZ };
-
-/* Which stickers a move takes with it, around which axis, and which way.
-   A layer is picked out by where a sticker is, not by any list of indices,
-   so a wide turn is just a more generous test. */
-export const TURNS = {
-  U: { axis: 'y', sign: -1, holds: (p) => p[1] > 0.9 },
-  D: { axis: 'y', sign: 1, holds: (p) => p[1] < -0.9 },
-  R: { axis: 'x', sign: -1, holds: (p) => p[0] > 0.9 },
-  L: { axis: 'x', sign: 1, holds: (p) => p[0] < -0.9 },
-  F: { axis: 'z', sign: -1, holds: (p) => p[2] > 0.9 },
-  B: { axis: 'z', sign: 1, holds: (p) => p[2] < -0.9 },
-  M: { axis: 'x', sign: 1, holds: (p) => Math.abs(p[0]) < 0.9 },
-  E: { axis: 'y', sign: 1, holds: (p) => Math.abs(p[1]) < 0.9 },
-  S: { axis: 'z', sign: -1, holds: (p) => Math.abs(p[2]) < 0.9 },
-  r: { axis: 'x', sign: -1, holds: (p) => p[0] > -0.9 },
-  l: { axis: 'x', sign: 1, holds: (p) => p[0] < 0.9 },
-  u: { axis: 'y', sign: -1, holds: (p) => p[1] > -0.9 },
-  d: { axis: 'y', sign: 1, holds: (p) => p[1] < 0.9 },
-  f: { axis: 'z', sign: -1, holds: (p) => p[2] > -0.9 },
-  b: { axis: 'z', sign: 1, holds: (p) => p[2] < 0.9 },
-  x: { axis: 'x', sign: -1, holds: () => true },
-  y: { axis: 'y', sign: -1, holds: () => true },
-  z: { axis: 'z', sign: -1, holds: () => true },
-};
-
-/** Split a token into the layer it turns and how far, e.g. R2 -> [R, 2]. */
-export function readToken(token) {
-  const parsed = /^([A-Za-z])(w?)('|2)?$/.exec(token || '');
-  if (!parsed) return null;
-  let base = parsed[1];
-  if (parsed[2] === 'w') base = base.toLowerCase();
-  if (!TURNS[base]) return null;
-  const quarters = parsed[3] === '2' ? 2 : parsed[3] === "'" ? -1 : 1;
-  return { base, quarters };
-}
-
-
-/* -- turning it into a picture --------------------------------------------
-
-   The cube is built as twenty-six little cubies rather than fifty-four loose
-   stickers. That matters for two reasons: a solid cubie hides what is behind
-   it, so nothing shows through from the far side; and when a layer swings out
-   you see the dark inside of the cube, which is what makes it read as a solid
-   object instead of a flat pattern.
-
-   Each cubie is drawn as six squares -- coloured where it meets the outside
-   world, plastic everywhere else -- and the whole lot is sorted by how far
-   away the cubie is. Cubies never pass through each other, so sorting them
-   as wholes is enough; sorting loose squares is what goes wrong.          */
-
-/* Two ways of building a cube.
-
-   A stickered cube is black plastic with a coloured square stuck on each
-   outward face, so every sticker is ringed by body colour.
-
-   A stickerless speedcube has no stickers at all: the plastic of the piece is
-   itself coloured, right to the edge, with rounded corners and a thin dark
-   channel where one piece meets the next. The colours are a little louder than
-   vinyl too. Getting that right means changing how a face is drawn, not just
-   deleting a border. */
-const STYLES = {
-  stickered: { cubie: 0.47, plastic: '#131316', tile: false },
-  speedcube: { cubie: 0.452, plastic: '#0f0f12', tile: true },
-};
-
-const SPEED_COLOURS = {
-  U: '#fdfdfd',
-  D: '#ffd60a',
-  F: '#0fbe4c',
-  B: '#1466ea',
-  R: '#f6362a',
-  L: '#ff8a12',
-};
-
-/** Knock an already-shaded rgb() down, for the chamfer round a moulded face. */
-const darken = (rgb, k) => rgb.replace(/\d+/g, (n) => Math.round(+n * k));
-const CAMERA = 8.4;            // eye close enough for the near face to loom
-const LENS = 21;
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
-function project(p) {
-  const scale = LENS / (CAMERA - p[2]);
-  return [p[0] * scale, -p[1] * scale];
-}
-
-/* A lamp fixed to the camera, so turning the cube shades it the way a real
-   one catches the light rather than every face reading the same. */
-const LAMP = [0.3, 0.56, 0.77];
+const CAMERA = 8.4;            // eye close enough for the near face to loom
+const LENS = 21;
+const LAMP = [0.3, 0.56, 0.77];   // fixed to the camera, so turning it shades
 
 function shade(hex, normal) {
   const lit = Math.max(0, dot(normal, LAMP));
@@ -262,23 +245,35 @@ function shade(hex, normal) {
   return `rgb(${mix((n >> 16) & 255)},${mix((n >> 8) & 255)},${mix(n & 255)})`;
 }
 
-/** Every cubie position except the core, which is never seen. */
-const CUBIES = [];
-for (let x = -1; x <= 1; x++) {
-  for (let y = -1; y <= 1; y++) {
-    for (let z = -1; z <= 1; z++) {
-      if (x || y || z) CUBIES.push([x, y, z]);
+/** Knock an already-shaded rgb() down, for the chamfer round a moulded face. */
+const darken = (rgb, k) => rgb.replace(/\d+/g, (n) => Math.round(+n * k));
+
+/** Every cubie position on an n-cube except the ones sealed inside. */
+function cubiesOf(n) {
+  const edge = (n - 1) / 2;
+  const out = [];
+  for (let a = 0; a < n; a++) {
+    for (let b = 0; b < n; b++) {
+      for (let c = 0; c < n; c++) {
+        const p = [a - edge, b - edge, c - edge];
+        const onSkin = Math.max(Math.abs(p[0]), Math.abs(p[1]), Math.abs(p[2])) === edge;
+        if (onSkin) out.push(p);
+      }
     }
   }
+  return out;
 }
 
 /**
  * Draw the cube.
  *   yaw, pitch  which way it is turned towards you, in radians
- *   turn        { base, quarters, progress } to catch a move mid-swing
+ *   turn        { token, progress } to catch a move mid-swing
  *   dim         fade back everything the turn does not carry
+ *   style       'stickered' or 'speedcube'
  */
 export function cubeSvg(state, options = {}) {
+  const n = sizeOf(state);
+  const edge = (n - 1) / 2;
   const style = STYLES[options.style] ? options.style : 'stickered';
   const kit = STYLES[style];
   const palette = kit.tile ? SPEED_COLOURS : COLOURS;
@@ -286,25 +281,41 @@ export function cubeSvg(state, options = {}) {
   const PLASTIC = kit.plastic;
   const yaw = options.yaw === undefined ? -0.62 : options.yaw;
   const pitch = options.pitch === undefined ? 0.5 : options.pitch;
-  const turn = options.turn || null;
-  const spec = turn ? TURNS[turn.base] : null;
-  const sweep = spec
-    ? spec.sign * (turn.quarters || 1) * (Math.PI / 2) * (turn.progress || 0)
+
+  // Everything is drawn at unit-cubie scale, then shrunk to a constant width,
+  // so every size of cube lands the same size on the page.
+  const zoom = 3 / n;
+
+  const plan = options.turn ? planMove(options.turn.token, n) : null;
+  const axis = plan ? AXIS_OF[plan.face] : null;
+  const sweep = plan
+    ? SENSE_OF[plan.face] * plan.quarters * (Math.PI / 2) * (options.turn.progress || 0)
     : 0;
+  const carried = (home) => {
+    if (!plan) return false;
+    const depth = Math.round(edge - dot(home, FRAME[plan.face].normal));
+    return plan.depths.includes(depth);
+  };
 
   const toView = (p, moving) => {
-    const q = moving && sweep ? SPIN[spec.axis](p, sweep) : p;
+    const q = moving && sweep ? SPIN[axis](p, sweep) : p;
     return spinX(spinY(q, yaw), pitch);
+  };
+  const project = (p) => {
+    const scale = LENS / (CAMERA - p[2] * zoom);
+    return [p[0] * zoom * scale, -p[1] * zoom * scale];
   };
 
   const panels = [];
-  for (const home of CUBIES) {
-    const moving = spec ? spec.holds(home) : false;
+  for (const home of cubiesOf(n)) {
+    const moving = carried(home);
     const seat = toView(home, moving);
 
     for (const face of FACES) {
       const { normal, col, row } = FRAME[face];
-      const outside = dot(home, normal) === 1;
+      // Not rounded: on an even cube the edge is a half-integer (0.5 on a 2x2,
+      // 1.5 on a 4x4), and rounding would throw the half away.
+      const outside = Math.abs(dot(home, normal) - edge) < 1e-6;
 
       // Every transform here is a rotation about the origin, so a direction
       // can go through the same one as a point.
@@ -324,16 +335,12 @@ export function cubeSvg(state, options = {}) {
 
       let fill = PLASTIC;
       if (outside) {
-        const index = (dot(home, row) + 1) * 3 + (dot(home, col) + 1);
-        fill = shade(palette[state[face][index]], dir);
+        const c = Math.round(dot(home, col) + edge);
+        const r = Math.round(dot(home, row) + edge);
+        fill = shade(palette[state[face][r * n + c]], dir);
       }
-      panels.push({
-        seat: seat[2],
-        corners,
-        fill,
-        outside,
-        faded: spec && options.dim && !moving,
-      });
+      panels.push({ seat: seat[2], corners, fill, outside,
+                    faded: plan && options.dim && !moving });
     }
   }
 
@@ -342,9 +349,8 @@ export function cubeSvg(state, options = {}) {
   const drawn = panels.map((panel) => {
     const outline = panel.corners
       .map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
-    if (!panel.outside) {
-      return `<polygon points="${outline}" fill="${PLASTIC}"/>`;
-    }
+    if (!panel.outside) return `<polygon points="${outline}" fill="${PLASTIC}"/>`;
+
     const fade = panel.faded ? ' opacity="0.38"' : '';
     const mid = panel.corners.reduce((a, p) => [a[0] + p[0] / 4, a[1] + p[1] / 4], [0, 0]);
     const pull = (k) => panel.corners
@@ -353,18 +359,18 @@ export function cubeSvg(state, options = {}) {
 
     if (kit.tile) {
       // Stickerless: the piece itself is coloured, right through. What reads as
-      // a border on a real one is the moulded edge of the plastic catching less
-      // light, so the face is laid down twice -- a darker chamfer at full size,
-      // and the face proper inset within it with the corners taken off.
+      // a border on a real one is the moulded edge catching less light, so the
+      // face is laid down twice -- a darker chamfer at full size, and the face
+      // proper inset within it with the corners taken off.
       const k = 0.86;
       const side = (Math.hypot(panel.corners[1][0] - panel.corners[0][0],
                                panel.corners[1][1] - panel.corners[0][1])
                   + Math.hypot(panel.corners[2][0] - panel.corners[1][0],
                                panel.corners[2][1] - panel.corners[1][1])) / 2;
-      const grow = (side * (1 - k)).toFixed(3);
       return `<polygon points="${outline}" fill="${darken(panel.fill, 0.58)}"${fade}/>`
         + `<polygon points="${pull(k)}" fill="${panel.fill}"`
-        + ` stroke="${panel.fill}" stroke-width="${grow}" stroke-linejoin="round"${fade}/>`;
+        + ` stroke="${panel.fill}" stroke-width="${(side * (1 - k)).toFixed(3)}"`
+        + ` stroke-linejoin="round"${fade}/>`;
     }
 
     // Stickered: plastic behind, sticker inset within it, and the gap between
@@ -377,6 +383,3 @@ export function cubeSvg(state, options = {}) {
   return `<svg class="cube3d" viewBox="-10.5 -10.5 21 21" xmlns="http://www.w3.org/2000/svg"`
     + ` role="img" aria-label="A cube you can turn by dragging">${drawn}</svg>`;
 }
-
-/** Which events this drawing is honest about. */
-export const CAN_DRAW = new Set(['333', '333oh']);

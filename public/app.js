@@ -1,7 +1,7 @@
 import { scrambleFor, EVENTS, EVENT_LIST, minimumFor } from './scramble.js';
 import { LEVELS, NOTATION } from './learn.js';
-import { afterSequence, cubeSvg, solved, applyMove, tokensOf, clone, CAN_DRAW,
-         readToken } from './cube.js';
+import { afterSequence, cubeSvg, solved, applyMove, tokensOf, inverseOf,
+         clone, EVENT_SIZE } from './cube.js';
 
 /* ------------------------------------------------------------------ state */
 
@@ -384,12 +384,12 @@ function nextScramble() {
   drawScramble();
 }
 
-/* Show what you are actually about to solve. Only for the events this
-   drawing is honest about -- a 3x3 cube would be a lie for 2x2 or 4x4. */
+/* Show what you are actually about to solve, on a cube of the right size. */
 function drawScramble() {
   const holder = $('scramble-cube');
-  if (!CAN_DRAW.has(state.event)) { holder.innerHTML = ''; return; }
-  paintCube(holder, afterSequence(state.scramble));
+  const n = EVENT_SIZE[state.event];
+  if (!n) { holder.innerHTML = ''; return; }
+  paintCube(holder, afterSequence(state.scramble, null, n));
 }
 
 /* Every cube on the page can be dragged around to see the back of it. The
@@ -521,14 +521,13 @@ function paintNotation() {
 
   grid.querySelectorAll('[data-note]').forEach((host) => {
     const entry = NOTATION[+host.dataset.note];
-    const parsed = readToken(entry.demo);
-    host.__extra = { turn: { ...parsed, progress: 0.34 }, dim: true };
+    host.__extra = { turn: { token: entry.demo, progress: 0.34 }, dim: true };
     paintCube(host, solved(), host.__extra);
-    host.addEventListener('click', () => playNotation(host, parsed));
+    host.addEventListener('click', () => playNotation(host, entry.demo));
   });
 }
 
-function playNotation(host, parsed) {
+function playNotation(host, token) {
   if (host.__running) return;
   host.__running = true;
   const started = performance.now();
@@ -537,10 +536,10 @@ function playNotation(host, parsed) {
     const t = Math.min(1, (performance.now() - started) / span);
     // out and back, so the cube ends where it started and can be replayed
     const swing = t < 0.7 ? t / 0.7 : 1 - (t - 0.7) / 0.3;
-    host.__extra = { turn: { ...parsed, progress: swing }, dim: true };
+    host.__extra = { turn: { token, progress: swing }, dim: true };
     paintCube(host, null, host.__extra);
     if (t < 1) { requestAnimationFrame(frame); return; }
-    host.__extra = { turn: { ...parsed, progress: 0.34 }, dim: true };
+    host.__extra = { turn: { token, progress: 0.34 }, dim: true };
     paintCube(host, null, host.__extra);
     host.__running = false;
   };
@@ -779,8 +778,13 @@ function openPlayer(algEl) {
   algEl.classList.add('is-open');
   algEl.after(host);
 
+  /* Open on the case rather than a solved cube: an algorithm is an answer,
+     and showing the answer first tells you nothing about the question. The
+     case is simply the algorithm undone, so playing it through solves it. */
   player = { alg: algEl, host, moves: tokensOf(sequence), index: 0,
-             state: solved(), timer: null, turning: false, built: false };
+             case: afterSequence(inverseOf(sequence)),
+             timer: null, turning: false, built: false };
+  player.state = clone(player.case);
   paintPlayer();
 
   host.addEventListener('click', (e) => {
@@ -796,7 +800,7 @@ function openPlayer(algEl) {
 function resetPlayer() {
   player.index = 0;
   player.turning = false;
-  player.state = solved();
+  player.state = clone(player.case);
   paintPlayer();
 }
 
@@ -810,14 +814,6 @@ function stepPlayer() {
   if (player.index >= player.moves.length) { resetPlayer(); return false; }
 
   const token = player.moves[player.index];
-  const parsed = readToken(token);
-  if (!parsed) {                       // nothing to animate; just take it
-    applyMove(player.state, token);
-    player.index += 1;
-    paintPlayer();
-    return true;
-  }
-
   player.turning = true;
   const started = performance.now();
   const frame = () => {
@@ -826,7 +822,7 @@ function stepPlayer() {
     const eased = progress < 0.5
       ? 2 * progress * progress
       : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-    paintPlayer({ base: parsed.base, quarters: parsed.quarters, progress: eased });
+    paintPlayer({ token, progress: eased });
     if (progress < 1) { requestAnimationFrame(frame); return; }
     applyMove(player.state, token);
     player.index += 1;
@@ -858,6 +854,7 @@ function paintPlayer(turn) {
   // Only the cube changes between frames, so the rest is built once.
   if (!player.built) {
     player.host.innerHTML = `<div class="cube-holder player-cube"></div>
+      <div class="stage"></div>
       <div class="track"></div>
       <div class="controls">
         <button class="mini" data-player="play"></button>
@@ -870,6 +867,9 @@ function paintPlayer(turn) {
   paintCube(player.cube, player.state, turn ? { turn } : {});
 
   if (turn) return;                    // mid-turn, the labels have not changed
+  const solvedNow = player.index >= player.moves.length;
+  player.host.querySelector('.stage').textContent =
+    solvedNow ? 'solved' : player.index === 0 ? 'the case' : 'part way through';
   player.host.querySelector('.track').innerHTML = player.moves.map((move, i) => {
     const cls = i === player.index ? 'now' : i < player.index ? 'done' : '';
     return `<span class="${cls}">${esc(move)}</span>`;

@@ -423,6 +423,10 @@ body.timing .stats, body.timing .session, body.timing .after { visibility: hidde
 }
 .alg-player .player-cube { max-width: 190px; margin: 0 auto .5rem; }
 .alg-player .controls { display: flex; gap: .4rem; justify-content: center; flex-wrap: wrap; }
+.alg-player .stage {
+  text-align: center; font-size: .78rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .08em; margin-bottom: .4rem;
+}
 .alg-player .track {
   display: flex; flex-wrap: wrap; gap: .3rem; justify-content: center;
   margin-bottom: .6rem; font-family: ui-monospace, Menlo, monospace; font-size: .85rem;
