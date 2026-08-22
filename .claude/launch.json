@@ -9,6 +9,16 @@
       ],
       "port": 8123,
       "autoPort": true
+    },
+    {
+      "name": "cube-timer-demo",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "server.py",
+        "--demo"
+      ],
+      "port": 8124,
+      "autoPort": true
     }
   ]
 }

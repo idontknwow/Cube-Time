@@ -118,6 +118,21 @@ cost) and a rule in the cosmetics section at the bottom of `public/styles.css`.
 The server only ever stores which id you are wearing — what it looks like is
 entirely the stylesheet's business.
 
+## Demo mode
+
+Trying out ideas is miserable if you have to grind for cubies first, so:
+
+    python3 server.py --demo
+
+Everything in the store is free, the header shows a `DEMO` badge and your
+cubie count reads as unlimited. Nothing else changes -- solves, records and
+the leaderboard behave exactly as they normally would, so what you see is what
+the real thing will do.
+
+It is off unless you ask for it, and it prints a warning at startup, because a
+public site running this way makes every reward in it meaningless. Do not set
+`CUBE_DEMO=1` on your Vercel deployment.
+
 ## Accounts
 
 Solves are always saved in the browser on the device you used, signed in or

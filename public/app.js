@@ -16,6 +16,7 @@ const state = {
   user: null,
   shop: {},
   inspection: localStorage.getItem('cube.inspection') === '1',
+  demo: false,
   level: 'beginner',
 };
 
@@ -555,8 +556,9 @@ async function showProfile(name) {
 
 function renderYou() {
   $('who').innerHTML = state.user
-    ? `${nameHtml(state.user.name, wearing('name_style'))} · ${state.user.cubies}`
+    ? `${nameHtml(state.user.name, wearing('name_style'))} · ${state.demo ? '∞' : state.user.cubies}`
     : 'Sign in';
+  $('demo-flag').hidden = !state.demo;
 
   if (!state.user) {
     $('account').innerHTML = `
@@ -578,7 +580,7 @@ function renderYou() {
     const prs = Object.entries(u.prs);
     $('account').innerHTML = `
       <h2>${nameHtml(u.name, wearing('name_style'))}</h2>
-      <p class="muted">${u.cubies} cubies · ${esc(plural(u.solve_count, 'solve'))} synced ·
+      <p class="muted">${state.demo ? 'unlimited cubies (demo)' : u.cubies + ' cubies'} · ${esc(plural(u.solve_count, 'solve'))} synced ·
         ${esc(plural(u.daily_wins, 'daily win'))}</p>
       ${prs.length ? `<table><thead><tr><th>Event</th><th>Single</th><th>ao5</th><th>ao12</th></tr></thead>
         <tbody>${prs.map(([event, pr]) => `
@@ -633,7 +635,7 @@ function renderShop() {
         ${previewFor(category, id)}
         <button class="mini" data-category="${esc(category)}" data-item="${esc(id)}"
           ${on ? 'disabled' : ''}>
-          ${on ? 'In use' : mine ? 'Use' : `${item.cost} cubies`}</button>
+          ${on ? 'In use' : mine ? 'Use' : state.demo ? 'Free' : `${item.cost} cubies`}</button>
       </div>`;
     }).join('');
 
@@ -672,11 +674,10 @@ function paintSwatches() {
       .map((v) => `<i style="background:${css.getPropertyValue(v).trim() || '#888'}"></i>`).join('');
     probe.remove();
   });
-  // Font cards render their own sample in the font they are selling.
+  // Font cards render their own sample in the font they are selling: the card
+  // sets --timer-font for its own subtree, whatever the page is wearing.
   document.querySelectorAll('[data-font-preview]').forEach((box) => {
     box.parentElement.dataset.font = box.dataset.fontPreview;
-    box.classList.add('time');
-    box.style.fontSize = '1.15rem';
   });
 }
 
@@ -697,6 +698,7 @@ async function auth(action) {
     state.token = data.token;
     state.user = data.user;
     state.shop = data.shop || {};
+    state.demo = !!data.demo;
     localStorage.setItem(AUTH, data.token);
     applyCosmetics();
     renderYou();
@@ -727,7 +729,9 @@ async function loadShop() {
   try {
     const data = await api('shop');
     state.shop = data.shop || {};
+    state.demo = !!data.demo;
     renderShop();
+    renderYou();
   } catch (err) {
     // The store just stays out of the way if it cannot be reached.
   }
@@ -739,6 +743,7 @@ async function restoreSession() {
     const data = await api('me');
     state.user = data.user;
     state.shop = data.shop || {};
+    state.demo = !!data.demo;
   } catch (err) {
     state.token = '';
     localStorage.removeItem(AUTH);

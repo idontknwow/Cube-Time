@@ -57,6 +57,12 @@ MIN_SOLVE = {
 }
 FALLBACK_MIN = 5000
 
+# Demo mode: everything in the store is free, so ideas can be tried on without
+# grinding for cubies first. Off unless asked for, because switching it on for
+# a public site makes every reward meaningless. Turn it on with
+# `python3 server.py --demo`, or CUBE_DEMO=1 in the environment.
+DEMO = os.environ.get("CUBE_DEMO") == "1"
+
 
 def minimum_for(event):
     return MIN_SOLVE.get(event, FALLBACK_MIN)
@@ -536,9 +542,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.api_daily_get(db)
             if action == "me":
                 user = self.require_user(db)
-                return {"user": public_user(user, full=True), "shop": SHOP}
+                return {"user": public_user(user, full=True), "shop": SHOP, "demo": DEMO}
             if action == "shop":
-                return {"shop": SHOP}
+                return {"shop": SHOP, "demo": DEMO}
             raise ApiError(404, "Unknown endpoint.")
 
         body = self.read_json_body()
@@ -572,7 +578,8 @@ class Handler(BaseHTTPRequestHandler):
         user = new_user(name, password)
         db["users"][name.lower()] = user
         save_db(db)
-        return {"token": make_token(name), "user": public_user(user, full=True), "shop": SHOP}
+        return {"token": make_token(name), "user": public_user(user, full=True),
+                "shop": SHOP, "demo": DEMO}
 
     def api_login(self, body, db):
         name = (body.get("username") or "").strip()
@@ -580,7 +587,8 @@ class Handler(BaseHTTPRequestHandler):
         user = db["users"].get(name.lower())
         if not user or not verify_password(password, user.get("pw")):
             raise ApiError(401, "Wrong name or password.")
-        return {"token": make_token(user["name"]), "user": public_user(user, full=True), "shop": SHOP}
+        return {"token": make_token(user["name"]), "user": public_user(user, full=True),
+                "shop": SHOP, "demo": DEMO}
 
     def api_solve(self, body, db):
         user = self.require_user(db)
@@ -783,7 +791,7 @@ class Handler(BaseHTTPRequestHandler):
         owned = user["owned"].setdefault(category, [])
         if item in owned:
             raise ApiError(409, "You already own that.")
-        cost = SHOP[category]["items"][item]["cost"]
+        cost = 0 if DEMO else SHOP[category]["items"][item]["cost"]
         if user.get("cubies", 0) < cost:
             raise ApiError(402, "Not enough cubies yet.")
         user["cubies"] -= cost
@@ -818,14 +826,18 @@ def lan_ip():
         sock.close()
 
 
-def run(port, host):
-    global SECRET
+def run(port, host, demo=False):
+    global SECRET, DEMO
+    DEMO = DEMO or demo
     SECRET = server_secret()
     os.makedirs(DATA_DIR, exist_ok=True)
     if not os.path.exists(DB_PATH):
         save_db(load_db())
     httpd = ThreadingHTTPServer((host, port), Handler)
     print("\n  Cube Timer is running.\n")
+    if DEMO:
+        print("    DEMO MODE - everything in the store is free.")
+        print("    Do not run a public site this way.\n")
     print("    on this Mac:   http://localhost:%d" % port)
     print("    on your phone: http://%s:%d   (same Wi-Fi)" % (lan_ip(), port))
     print("\n  Press Control-C to stop.\n")
@@ -840,5 +852,7 @@ if __name__ == "__main__":
     # PORT lets a launcher pick the port; --port still wins if given.
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT") or 8000))
     parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--demo", action="store_true",
+                        help="make everything in the store free, for trying ideas out")
     args = parser.parse_args()
-    run(args.port, args.host)
+    run(args.port, args.host, args.demo)

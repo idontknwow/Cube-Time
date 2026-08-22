@@ -67,6 +67,11 @@ p { margin: 0 0 .75rem; }
 }
 .tab:hover { color: var(--ink); }
 .tab.is-on { background: var(--bg); color: var(--ink); }
+.demo-flag {
+  background: var(--warn); color: #1a1200; border-radius: 6px;
+  padding: .15rem .4rem; font-size: .68rem; font-weight: 700;
+  letter-spacing: .08em; white-space: nowrap;
+}
 .who {
   background: var(--accent); color: #fff; border: 0; border-radius: 8px;
   padding: .4rem .75rem; font: inherit; font-size: .85rem; cursor: pointer;
@@ -134,7 +139,7 @@ select, input[type="text"], input[type="password"] {
 .pad.is-running { border-color: var(--accent); }
 
 .time {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--timer-font, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: clamp(3.2rem, 15vw, 6.5rem);
   font-weight: 500; letter-spacing: -.02em;
   font-variant-numeric: tabular-nums;
@@ -277,12 +282,24 @@ body.timing .stats, body.timing .session, body.timing .after { visibility: hidde
 /* System faces only, so nothing has to be downloaded and the app keeps
    working offline. Each stack falls back to the default monospace. */
 
-[data-font="typewriter"] .time { font-family: "American Typewriter", "Courier New", ui-monospace, monospace; }
-[data-font="geometric"]  .time { font-family: Futura, "Century Gothic", "Avenir Next", ui-monospace, monospace; }
-[data-font="rounded"]    .time { font-family: ui-rounded, "SF Pro Rounded", "Arial Rounded MT Bold", ui-monospace, monospace; }
-[data-font="serif"]      .time { font-family: Palatino, "Palatino Linotype", Georgia, ui-monospace, monospace; }
-[data-font="heavy"]      .time { font-family: Impact, Haettenschweiler, "Arial Black", ui-monospace, monospace; letter-spacing: 0; }
-[data-font="marker"]     .time { font-family: "Marker Felt", "Comic Sans MS", "Bradley Hand", ui-monospace, monospace; }
+/* Each font sets a variable rather than a font-family outright. A shop card
+   carries its own [data-font] so it can preview a face you are not wearing,
+   and custom properties resolve from the nearest ancestor -- where a plain
+   font-family rule would simply lose to whichever [data-font] rule happened
+   to come last in this file, and every card would show the same font. */
+[data-font="mono"]       { --timer-font: ui-monospace, SFMono-Regular, Menlo, monospace; }
+[data-font="typewriter"] { --timer-font: "American Typewriter", "Courier New", ui-monospace, monospace; }
+[data-font="geometric"]  { --timer-font: Futura, "Century Gothic", "Avenir Next", ui-monospace, monospace; }
+[data-font="rounded"]    { --timer-font: ui-rounded, "SF Pro Rounded", "Arial Rounded MT Bold", ui-monospace, monospace; }
+[data-font="serif"]      { --timer-font: Palatino, "Palatino Linotype", Georgia, ui-monospace, monospace; }
+[data-font="heavy"]      { --timer-font: Impact, Haettenschweiler, "Arial Black", ui-monospace, monospace; }
+[data-font="marker"]     { --timer-font: "Marker Felt", "Comic Sans MS", "Bradley Hand", ui-monospace, monospace; }
+[data-font="heavy"] .time { letter-spacing: 0; }
+
+/* Only the font cards follow it; name and animation cards keep the body face. */
+.preview[data-font-preview] {
+  font-family: var(--timer-font, ui-monospace, Menlo, monospace);
+}
 
 /* ---- name styles ---------------------------------------------------- */
 
