@@ -41,6 +41,11 @@ If you skip step 2 the site still loads and the store is still browsable --
 reads just come back empty -- and the first attempt to make an account explains
 exactly what is missing rather than failing silently.
 
+Racing is really a same-house feature for now. It works over the internet, but
+every poll on Vercel costs a round trip to Blob storage, and two racers writing
+at the same instant can overwrite each other -- see the limitation below. On
+your own Mac it is exactly as quick as it should be.
+
 **A real limitation.** Serverless instances do not share memory, so the lock
 that `server.py` uses on your Mac does not exist on Vercel. The whole database
 is one JSON document, read and written whole. If two people finish a solve at
@@ -97,6 +102,25 @@ All the content lives in `public/learn.js` as plain data, so it is easy to edit.
 every profile, and a daily battle where everyone gets the same scramble and one
 attempt.
 
+**Racing.** Create a race and share the four-character code. Everyone sees the
+same scramble in the lobby, scrambles their own cube, and presses ready; three
+seconds later every timer starts at once and you watch the other lanes fill as
+you solve.
+
+The synchronised start is the whole trick. The server hands every racer the
+same start instant, and each browser runs its own clock from it, so a slow
+request cannot give anybody a head start and an opponent's timer stays smooth
+without asking the server for every tick. Polling carries only what actually
+changes -- who joined, who is ready, who finished. A finish is refused before
+the countdown ends, and a time longer than the race has been running is
+refused too, which catches a drifting clock as readily as someone trying it on.
+
+**A cube you can see.** The timer draws the scramble as an unfolded cube, so
+you can check you scrambled it right. In Learn, every algorithm is clickable
+and runs on a cube move by move, with play, step and reset -- the 21 PLLs are
+something to watch rather than a wall of notation to be trusted. The drawing is
+3x3 only; a 3x3 net would be a lie for 2x2 or 4x4, so those show nothing.
+
 **Rewards.** Solving earns cubies — one per solve, 25 for a new best single,
 15 for a new best average, 10 for entering the daily battle. Cubies buy
 cosmetics in four categories:
@@ -148,6 +172,7 @@ tokens are HMAC-signed and last 30 days.
     public/index.html   markup
     public/app.js       timer, statistics, views
     public/scramble.js  scramble generation
+    public/cube.js      the cube itself: state, moves, and the flat drawing
     public/learn.js     every lesson, as data
     public/styles.css   layout and the themes
     data/db.json        users, solves, cosmetics  (not in git)

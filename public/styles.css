@@ -413,3 +413,50 @@ body.timing .stats, body.timing .session, body.timing .after { visibility: hidde
   color: var(--bg); background: var(--accent); border-color: var(--accent);
   font-weight: 700;
 }
+
+/* ---- racing ---------------------------------------------------------- */
+
+.race-strip {
+  border: 1px solid var(--accent); border-radius: 10px;
+  padding: .6rem .75rem; margin-bottom: .75rem; background: var(--panel);
+}
+.race-strip .race-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: .8rem; color: var(--muted); margin-bottom: .4rem;
+}
+.race-lane {
+  display: grid; grid-template-columns: 1fr auto; gap: .5rem;
+  align-items: center; padding: .2rem 0; font-size: .9rem;
+}
+.race-lane .who-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.race-lane .lane-time {
+  font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums;
+}
+.race-lane.is-you { font-weight: 650; }
+.race-lane.is-done .lane-time { color: var(--good); }
+.race-bar { grid-column: 1 / -1; height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.race-bar i { display: block; height: 100%; background: var(--accent); width: 0; }
+.race-lane.is-done .race-bar i { background: var(--good); }
+
+.countdown {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: clamp(2.5rem, 12vw, 5rem); font-weight: 600; color: var(--warn);
+  text-align: center;
+}
+
+.race-code {
+  font-family: ui-monospace, Menlo, monospace; font-size: 1.6rem;
+  letter-spacing: .3em; font-weight: 700; color: var(--accent);
+  text-align: center; padding: .4rem 0;
+}
+.race-players { list-style: none; margin: .5rem 0; padding: 0; }
+.race-players li {
+  display: flex; justify-content: space-between; gap: .5rem;
+  padding: .3rem 0; border-bottom: 1px solid var(--line); font-size: .9rem;
+}
+.race-players li:last-child { border-bottom: 0; }
+.race-players .status { color: var(--muted); font-size: .82rem; }
+.race-players .status.ready { color: var(--good); }
+.join-row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+.join-row input { width: 7rem; text-transform: uppercase; letter-spacing: .2em;
+  font-family: ui-monospace, Menlo, monospace; }

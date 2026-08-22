@@ -141,6 +141,7 @@ const IDLE_HINT = 'Hold <kbd>space</kbd> — or press and hold here';
 function tick() {
   if (phase === 'run') {
     setTime(null, performance.now() - startedAt);
+    if (racing()) paintRaceStrip();
     raf = requestAnimationFrame(tick);
   } else if (phase === 'inspect' || phase === 'hold' || phase === 'ready') {
     if (wasInspecting) {
@@ -282,6 +283,7 @@ function stopSolve() {
   nextScramble();
   uploadSolve(lastSolve);
   maybeSubmitDaily(lastSolve);
+  submitRaceFinish(lastSolve);
 }
 
 async function uploadSolve(solve) {
@@ -444,6 +446,215 @@ function renderLearn() {
 
   $('notation').innerHTML = NOTATION
     .map(([term, meaning]) => `<dt>${esc(term)}</dt><dd>${esc(meaning)}</dd>`).join('');
+}
+
+/* ----------------------------------------------------------------- racing */
+/* Both sides get the same start time from the server and run their own clock
+   from it. Polling only carries what changes -- who joined, who is ready, who
+   finished -- so an opponent's timer stays smooth even on a slow connection. */
+
+const race = { view: null, poll: null, starter: null, offset: 0,
+               submitted: false, armed: false };
+
+/* Server time minus this device's time. Everything shared is in server time. */
+function raceStartLocal() {
+  if (!race.view || !race.view.start_at) return null;
+  return race.view.start_at * 1000 - race.offset;
+}
+
+function adoptRace(view) {
+  race.offset = view.now * 1000 - Date.now();
+  race.view = view;
+  renderRace();
+  paintRaceStrip();
+
+  if (view.start_at && !race.armed) {
+    race.armed = true;
+    race.submitted = false;
+    state.event = view.event || '333';
+    $('event').value = state.event;
+    state.scramble = view.scramble;
+    $('scramble').textContent = view.scramble;
+    drawScramble();
+    show('timer');
+    runCountdown();
+  }
+  startRacePolling();
+}
+
+async function raceDo(body) {
+  try {
+    const view = await post('race', body);
+    if (view.left) { leaveRaceLocally(); return; }
+    adoptRace(view);
+  } catch (err) {
+    toast(err.message, true);
+    if (/no race|finished or never/i.test(err.message)) leaveRaceLocally();
+  }
+}
+
+function leaveRaceLocally() {
+  stopRacePolling();
+  clearTimeout(race.starter);
+  race.view = null; race.armed = false; race.submitted = false;
+  $('race-strip').hidden = true;
+  renderRace();
+}
+
+function startRacePolling() {
+  if (race.poll || !race.view) return;
+  race.poll = setInterval(async () => {
+    if (!race.view) { stopRacePolling(); return; }
+    try {
+      const view = await api('race?code=' + encodeURIComponent(race.view.code));
+      race.offset = view.now * 1000 - Date.now();
+      race.view = view;
+      renderRace();
+      paintRaceStrip();
+      if (view.start_at && !race.armed) adoptRace(view);
+      if (view.players.every((p) => p.done)) stopRacePolling();
+    } catch (err) {
+      leaveRaceLocally();
+    }
+  }, 900);
+}
+
+function stopRacePolling() {
+  if (race.poll) { clearInterval(race.poll); race.poll = null; }
+}
+
+/* The three seconds between everyone being ready and the timers starting.
+   The start is scheduled on a timer rather than driven by the animation
+   frames, because a browser pauses those in a background tab -- a racer who
+   tabbed away would otherwise never be started at all. The frames only draw
+   the digits; and because the clock is measured from the shared start time,
+   a late trigger still yields the right elapsed time, it just arrives with
+   the timer already part-way along. */
+function runCountdown() {
+  $('race-strip').hidden = false;
+  clearTimeout(race.starter);
+  race.starter = setTimeout(beginRaceSolve, Math.max(0, raceStartLocal() - Date.now()));
+
+  const drawDigits = () => {
+    if (!racing() || phase === 'run') return;
+    const left = (raceStartLocal() - Date.now()) / 1000;
+    if (left <= 0) { beginRaceSolve(); return; }
+    setTime(Math.ceil(left).toString());
+    hint('Get ready…');
+    requestAnimationFrame(drawDigits);
+  };
+  drawDigits();
+}
+
+/* Everyone's clock starts from the same shared instant, so a slow request
+   cannot hand anybody a head start. */
+function beginRaceSolve() {
+  clearTimeout(race.starter);
+  if (phase === 'run' || !racing() || race.submitted) return;
+  wasInspecting = false;
+  setPhase('run');
+  hint('');
+  startedAt = performance.now() - (Date.now() - raceStartLocal());
+  cancelAnimationFrame(raf);
+  raf = requestAnimationFrame(tick);
+}
+
+const racing = () => !!(race.view && race.view.start_at);
+
+function paintRaceStrip() {
+  const strip = $('race-strip');
+  if (!racing()) { strip.hidden = true; return; }
+  strip.hidden = false;
+
+  const started = raceStartLocal();
+  const running = Math.max(0, Date.now() - started);
+  const slowest = Math.max(running, ...race.view.players.map((p) => p.ms || 0), 1);
+
+  strip.innerHTML = `
+    <div class="race-head"><span>Race ${esc(race.view.code)}</span>
+      <span>${race.view.players.filter((p) => p.done).length} of
+        ${race.view.players.length} finished</span></div>
+    ${race.view.players.map((p) => {
+      const shown = p.done ? p.ms : running;
+      const width = Math.min(100, (shown / slowest) * 100);
+      return `<div class="race-lane ${p.done ? 'is-done' : ''} ${p.name === race.view.you ? 'is-you' : ''}">
+        <span class="who-name">${nameHtml(p.name, p.name_style)}</span>
+        <span class="lane-time">${esc(fmt(shown, p.pen))}</span>
+        <span class="race-bar"><i style="width:${width}%"></i></span>
+      </div>`;
+    }).join('')}`;
+}
+
+function renderRace() {
+  const box = $('race');
+  if (!state.token) {
+    box.innerHTML = '<p class="muted">Sign in to race.</p>';
+    return;
+  }
+  if (!race.view) {
+    box.innerHTML = `
+      <div class="join-row">
+        <button class="mini" id="race-create">Create a race</button>
+        <span class="muted">or</span>
+        <input type="text" id="race-code" maxlength="4" placeholder="CODE"
+               autocapitalize="characters" autocomplete="off">
+        <button class="mini" id="race-join">Join</button>
+      </div>`;
+    $('race-create').onclick = () => raceDo({ do: 'create' });
+    $('race-join').onclick = () => {
+      const code = $('race-code').value.trim().toUpperCase();
+      if (code.length !== 4) { toast('A race code is four characters.', true); return; }
+      raceDo({ do: 'join', code });
+    };
+    return;
+  }
+
+  const view = race.view;
+  const me = view.players.find((p) => p.name === view.you);
+  const everyoneDone = view.players.every((p) => p.done);
+  const waiting = view.players.length < 2;
+
+  box.innerHTML = `
+    <p class="muted">Share this code:</p>
+    <div class="race-code">${esc(view.code)}</div>
+    <div class="daily-scramble">${esc(view.scramble)}</div>
+    <ul class="race-players">${view.players.map((p) => `
+      <li><span>${nameHtml(p.name, p.name_style)}</span>
+        <span class="status ${p.ready ? 'ready' : ''}">${
+          p.done ? esc(fmt(p.ms, p.pen)) : p.ready ? 'ready' : 'scrambling…'}</span></li>`).join('')}
+    </ul>
+    ${everyoneDone ? `<p class="muted">Race over — ${esc(view.players[0].name)} won.</p>` : ''}
+    <div class="join-row">
+      ${!view.start_at && !waiting && me && !me.ready
+        ? '<button class="mini" id="race-ready">My cube is scrambled</button>' : ''}
+      ${waiting ? '<span class="muted">Waiting for someone to join…</span>' : ''}
+      <button class="mini danger" id="race-leave">${everyoneDone ? 'Done' : 'Leave'}</button>
+    </div>`;
+
+  const ready = $('race-ready');
+  if (ready) ready.onclick = () => raceDo({ do: 'ready', code: view.code });
+  $('race-leave').onclick = () => raceDo({ do: 'leave', code: view.code });
+}
+
+async function submitRaceFinish(solve) {
+  if (!racing() || race.submitted) return;
+  race.submitted = true;
+  try {
+    const view = await post('race', { do: 'finish', code: race.view.code,
+                                      ms: solve.ms, pen: solve.pen });
+    race.offset = view.now * 1000 - Date.now();
+    race.view = view;
+    renderRace();
+    paintRaceStrip();
+    const place = view.players.findIndex((p) => p.name === view.you) + 1;
+    const finished = view.players.filter((p) => p.done).length;
+    toast(finished === view.players.length
+      ? (place === 1 ? 'You won the race!' : `Race over — you came ${place}.`)
+      : `Done in ${fmt(solve.ms, solve.pen)} — waiting on the others.`);
+  } catch (err) {
+    race.submitted = false;
+    toast(err.message, true);
+  }
 }
 
 /* ------------------------------------------------------- algorithm player */
@@ -853,7 +1064,7 @@ function show(view) {
   if (view !== 'learn') stopPlayer();
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('is-on', v.id === 'view-' + view));
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('is-on', t.dataset.view === view));
-  if (view === 'compete') { renderDaily(); renderLeaderboard(); }
+  if (view === 'compete') { renderDaily(); renderLeaderboard(); renderRace(); }
   if (view === 'learn') renderLearn();
   if (view === 'you') renderYou();
 }
@@ -877,6 +1088,7 @@ function init() {
   renderLearn();
   restoreSession();
   $('inspection').checked = state.inspection;
+  renderRace();
   setTime('0.000');
   hint(IDLE_HINT);
 

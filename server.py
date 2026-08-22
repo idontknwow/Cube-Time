@@ -63,6 +63,11 @@ FALLBACK_MIN = 5000
 # `python3 server.py --demo`, or CUBE_DEMO=1 in the environment.
 DEMO = os.environ.get("CUBE_DEMO") == "1"
 
+RACE_TTL = 60 * 60          # a race is forgotten an hour after it was made
+RACE_COUNTDOWN = 3.0        # seconds between everyone being ready and GO
+RACE_MAX = 8
+RACE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no O/0, no I/1
+
 
 def minimum_for(event):
     return MIN_SOLVE.get(event, FALLBACK_MIN)
@@ -150,7 +155,7 @@ def read_json(path, default):
         return default
 
 
-DEFAULT_DB = {"users": {}, "daily": {}}
+DEFAULT_DB = {"users": {}, "daily": {}, "races": {}}
 
 
 def load_db():
@@ -159,6 +164,7 @@ def load_db():
         db = json.loads(json.dumps(DEFAULT_DB))
     db.setdefault("users", {})
     db.setdefault("daily", {})
+    db.setdefault("races", {})
     return db
 
 
@@ -545,6 +551,8 @@ class Handler(BaseHTTPRequestHandler):
                 return {"user": public_user(user, full=True), "shop": SHOP, "demo": DEMO}
             if action == "shop":
                 return {"shop": SHOP, "demo": DEMO}
+            if action == "race":
+                return self.api_race_get(query, db)
             raise ApiError(404, "Unknown endpoint.")
 
         body = self.read_json_body()
@@ -560,6 +568,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.api_sync(body, db)
         if action == "daily":
             return self.api_daily_post(body, db)
+        if action == "race":
+            return self.api_race(body, db)
         if action == "buy":
             return self.api_buy(body, db)
         if action == "equip":
@@ -774,6 +784,141 @@ class Handler(BaseHTTPRequestHandler):
         save_db(db)
         view["user"] = public_user(user, full=True)
         return view
+
+    # ---- racing --------------------------------------------------------
+    # Both sides are handed the same start time and run their own clock from
+    # it, so an opponent's timer stays smooth without polling for every tick.
+    # Polling only carries the things that actually change: who joined, who is
+    # ready, and who finished.
+
+    def races(self, db):
+        cutoff = time.time() - RACE_TTL
+        for code in [c for c, r in db["races"].items() if r.get("created", 0) < cutoff]:
+            db["races"].pop(code, None)
+        return db["races"]
+
+    def race_view(self, race, me=None):
+        players = []
+        for entry in race["players"].values():
+            players.append({
+                "name": entry["name"],
+                "ready": bool(entry.get("ready")),
+                "ms": entry.get("ms"),
+                "pen": entry.get("pen", OK),
+                "done": entry.get("ms") is not None,
+                "name_style": entry.get("name_style", "plain"),
+            })
+        players.sort(key=lambda p: (not p["done"], p["ms"] if p["done"] else 0, p["name"]))
+        return {
+            "code": race["code"],
+            "scramble": race["scramble"],
+            "event": race.get("event", "333"),
+            "host": race.get("host", ""),
+            "start_at": race.get("start_at"),
+            "now": time.time(),
+            "players": players,
+            "you": me["name"] if me else None,
+        }
+
+    def api_race_get(self, query, db):
+        code = (query.get("code") or [""])[0].strip().upper()
+        race = self.races(db).get(code)
+        if not race:
+            raise ApiError(404, "That race has finished or never existed.")
+        save_db(db)
+        return self.race_view(race, self.current_user(db))
+
+    def api_race(self, body, db):
+        user = self.require_user(db)
+        migrate_user(user)
+        doing = body.get("do")
+        races = self.races(db)
+        key = user["name"].lower()
+
+        if doing == "create":
+            for code, race in list(races.items()):     # only one race at a time
+                if key in race["players"]:
+                    race["players"].pop(key, None)
+                    if not race["players"]:
+                        races.pop(code, None)
+            code = self.fresh_code(races)
+            races[code] = {
+                "code": code,
+                "scramble": scramble_333(random.Random()),
+                "event": "333",
+                "host": user["name"],
+                "created": time.time(),
+                "start_at": None,
+                "players": {key: self.race_player(user)},
+            }
+            save_db(db)
+            return self.race_view(races[code], user)
+
+        code = (body.get("code") or "").strip().upper()
+        race = races.get(code)
+        if not race:
+            raise ApiError(404, "No race with that code.")
+
+        if doing == "join":
+            if key not in race["players"]:
+                if race.get("start_at"):
+                    raise ApiError(409, "That race has already started.")
+                if len(race["players"]) >= RACE_MAX:
+                    raise ApiError(409, "That race is full.")
+                race["players"][key] = self.race_player(user)
+        elif doing == "ready":
+            if key not in race["players"]:
+                raise ApiError(403, "Join the race first.")
+            race["players"][key]["ready"] = True
+            everyone = list(race["players"].values())
+            if len(everyone) >= 2 and all(p.get("ready") for p in everyone) \
+                    and not race.get("start_at"):
+                race["start_at"] = time.time() + RACE_COUNTDOWN
+        elif doing == "finish":
+            entry = race["players"].get(key)
+            if entry is None:
+                raise ApiError(403, "You are not in that race.")
+            started = race.get("start_at")
+            if not started or time.time() < started:
+                raise ApiError(409, "The race has not started yet.")
+            if entry.get("ms") is not None:
+                raise ApiError(409, "You have already finished.")
+            solve = self.clean_solve(dict(body, event=race.get("event", "333")))
+            # A time longer than the race has been running cannot be real. It
+            # catches a clock that has drifted as readily as someone trying it on.
+            elapsed = (time.time() - started) * 1000 + 1500
+            if solve["ms"] > elapsed:
+                raise ApiError(400, "That is longer than the race has been running.")
+            entry["ms"] = solve["ms"]
+            entry["pen"] = solve["pen"]
+            entry["done_at"] = time.time()
+        elif doing == "leave":
+            race["players"].pop(key, None)
+            if not race["players"]:
+                races.pop(code, None)
+                save_db(db)
+                return {"left": True}
+        else:
+            raise ApiError(400, "Unknown race action.")
+
+        save_db(db)
+        return self.race_view(race, user)
+
+    def race_player(self, user):
+        return {
+            "name": user["name"],
+            "ready": False,
+            "ms": None,
+            "pen": OK,
+            "name_style": user.get("wearing", {}).get("name_style", "plain"),
+        }
+
+    def fresh_code(self, races):
+        for _ in range(40):
+            code = "".join(secrets.choice(RACE_ALPHABET) for _ in range(4))
+            if code not in races:
+                return code
+        raise ApiError(503, "Could not find a free race code. Try again.")
 
     # ---- shop ---------------------------------------------------------
 
