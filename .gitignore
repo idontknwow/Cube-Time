@@ -1,5 +1,9 @@
 data/db.json
 data/secret.txt
+
+# self-signed TLS pair for --https; never commit a private key
+data/cert.pem
+data/key.pem
 .DS_Store
 *.tmp-*
 

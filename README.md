@@ -37,6 +37,12 @@ Deploying:
    Without it everyone is signed out whenever Vercel starts a fresh instance.
 4. Redeploy so the new environment variables are picked up.
 
+**If the deployed site looks wrong but your Mac looks right, it is almost
+certainly serving an older build.** The bottom of the You tab prints which
+drawing code the browser actually loaded, and says so in red if it is out of
+date. Reload the page first; if it still says so, the deployment has not caught
+up -- push again, or redeploy from the Vercel dashboard.
+
 If you skip step 2 the site still loads and the store is still browsable --
 reads just come back empty -- and the first attempt to make an account explains
 exactly what is missing rather than failing silently.

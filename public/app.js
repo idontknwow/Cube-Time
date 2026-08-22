@@ -1137,6 +1137,34 @@ function applyCosmetics() {
   root.dataset.font = wearing('font');
 }
 
+/* ----------------------------------------------------------- which build? */
+/* Hashes the drawing code the browser actually loaded, rather than the code
+   the server meant to send. A stale copy left in a cache or on a CDN is the
+   one thing that looks exactly like a bug in the app, and this tells the two
+   apart at a glance. */
+async function buildStamp() {
+  try {
+    const text = await (await fetch(new URL('./cube.js', import.meta.url))).text();
+    let h = 5381;
+    for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+    // The rebuilt drawing is the one that stopped the cube looking flat.
+    const modern = text.includes('cubiesOf') && text.includes('planMove');
+    return { hash: h.toString(16).padStart(8, '0').slice(0, 6), bytes: text.length, modern };
+  } catch (_) {
+    return null;
+  }
+}
+
+async function showBuild() {
+  const slot = $('build');
+  if (!slot) return;
+  const stamp = await buildStamp();
+  if (!stamp) { slot.textContent = ''; return; }
+  slot.textContent = `build ${stamp.hash} · ${stamp.bytes} bytes`
+    + (stamp.modern ? '' : ' · OUT OF DATE — reload, or redeploy');
+  slot.classList.toggle('stale', !stamp.modern);
+}
+
 /* --------------------------------------------------------------- accounts */
 
 async function auth(action) {
@@ -1211,7 +1239,7 @@ function show(view) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('is-on', t.dataset.view === view));
   if (view === 'compete') { renderDaily(); renderLeaderboard(); renderRace(); }
   if (view === 'learn') renderLearn();
-  if (view === 'you') renderYou();
+  if (view === 'you') { renderYou(); showBuild(); }
 }
 
 /* ------------------------------------------------------------------- wire */
@@ -1234,6 +1262,7 @@ function init() {
   restoreSession();
   $('inspection').checked = state.inspection;
   renderRace();
+  showBuild();
   setTime('0.000');
   hint(IDLE_HINT);
 

@@ -487,3 +487,10 @@ body.timing .stats, body.timing .session, body.timing .after { visibility: hidde
 .join-row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 .join-row input { width: 7rem; text-transform: uppercase; letter-spacing: .2em;
   font-family: ui-monospace, Menlo, monospace; }
+
+/* Which build is actually loaded -- see buildStamp() in app.js. */
+.build {
+  text-align: center; font-size: .72rem; color: var(--muted);
+  font-family: ui-monospace, Menlo, monospace; margin: .5rem 0 0;
+}
+.build.stale { color: var(--bad); font-weight: 600; }
