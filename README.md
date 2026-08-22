@@ -41,6 +41,24 @@ If you skip step 2 the site still loads and the store is still browsable --
 reads just come back empty -- and the first attempt to make an account explains
 exactly what is missing rather than failing silently.
 
+Anyone in a race can turn on a camera, and the others see them while they
+solve. It is off until you ask for it, there is no microphone, and it stops
+the moment you leave. The video goes straight from one browser to the other --
+the server only carries the handful of notes the two browsers need to find
+each other, and never sees a frame. No relay service is involved either, which
+is why it works on your own Wi-Fi and nowhere else matters.
+
+**Cameras need https.** A browser will not hand over a camera on a page that
+is not a secure context, and a plain `http://192.168...` address is not one --
+which is exactly where a race between two people happens. So:
+
+    python3 server.py --https
+
+which makes a self-signed certificate the first time and serves over TLS. Each
+device will warn you once that nobody vouches for the certificate; accept it
+and the camera works. Without `--https` everything else still runs, and the
+race panel says why the camera is unavailable rather than silently failing.
+
 Racing is really a same-house feature for now. It works over the internet, but
 every poll on Vercel costs a round trip to Blob storage, and two racers writing
 at the same instant can overwrite each other -- see the limitation below. On
@@ -102,7 +120,7 @@ All the content lives in `public/learn.js` as plain data, so it is easy to edit.
 every profile, and a daily battle where everyone gets the same scramble and one
 attempt.
 
-**Racing.** Create a race and share the four-character code. Everyone sees the
+**Racing, with faces.** Create a race and share the four-character code. Everyone sees the
 same scramble in the lobby, scrambles their own cube, and presses ready; three
 seconds later every timer starts at once and you watch the other lanes fill as
 you solve.

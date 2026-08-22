@@ -487,3 +487,24 @@ body.timing .stats, body.timing .session, body.timing .after { visibility: hidde
 .join-row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 .join-row input { width: 7rem; text-transform: uppercase; letter-spacing: .2em;
   font-family: ui-monospace, Menlo, monospace; }
+
+/* ---- race cameras ----------------------------------------------------- */
+
+.race-cams {
+  display: flex; gap: .5rem; flex-wrap: wrap; justify-content: center;
+  margin-bottom: .5rem;
+}
+.race-cams:empty { display: none; }
+.cam-tile { position: relative; width: 132px; }
+.cam-tile video {
+  width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block;
+  border-radius: 8px; background: #000; border: 1px solid var(--line);
+}
+.cam-tile.is-you video { border-color: var(--accent); transform: scaleX(-1); }
+.cam-tile span {
+  position: absolute; left: .3rem; bottom: .3rem; font-size: .7rem;
+  background: rgba(0,0,0,.6); color: #fff; padding: .05rem .3rem; border-radius: 4px;
+}
+.cam-note { color: var(--warn); }
+
+@media (max-width: 620px) { .cam-tile { width: 104px; } }

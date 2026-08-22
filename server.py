@@ -18,6 +18,8 @@ import random
 import re
 import secrets
 import socket
+import ssl
+import subprocess
 import threading
 import time
 from datetime import datetime, timezone
@@ -815,8 +817,17 @@ class Handler(BaseHTTPRequestHandler):
                 "pen": entry.get("pen", OK),
                 "done": entry.get("ms") is not None,
                 "name_style": entry.get("name_style", "plain"),
+                "camera": bool(entry.get("camera")),
             })
         players.sort(key=lambda p: (not p["done"], p["ms"] if p["done"] else 0, p["name"]))
+        # Anything waiting for you is handed over once and then dropped: these
+        # are one-shot notes for setting up a video call, not a chat log.
+        inbox = []
+        if me:
+            mine = race["players"].get(me["name"].lower())
+            if mine:
+                inbox = mine.get("inbox", [])
+                mine["inbox"] = []
         return {
             "code": race["code"],
             "scramble": race["scramble"],
@@ -826,6 +837,7 @@ class Handler(BaseHTTPRequestHandler):
             "now": time.time(),
             "players": players,
             "you": me["name"] if me else None,
+            "inbox": inbox,
         }
 
     def api_race_get(self, query, db):
@@ -833,8 +845,11 @@ class Handler(BaseHTTPRequestHandler):
         race = self.races(db).get(code)
         if not race:
             raise ApiError(404, "That race has finished or never existed.")
+        # Build the view first: it is what empties your mailbox, and saving
+        # before that would hand the same notes out again on every poll.
+        view = self.race_view(race, self.current_user(db))
         save_db(db)
-        return self.race_view(race, self.current_user(db))
+        return view
 
     def api_race(self, body, db):
         user = self.require_user(db)
@@ -900,6 +915,26 @@ class Handler(BaseHTTPRequestHandler):
             entry["ms"] = solve["ms"]
             entry["pen"] = solve["pen"]
             entry["done_at"] = time.time()
+        elif doing == "camera":
+            entry = race["players"].get(key)
+            if entry is None:
+                raise ApiError(403, "You are not in that race.")
+            entry["camera"] = bool(body.get("on"))
+            if not entry["camera"]:
+                entry["inbox"] = []
+        elif doing == "signal":
+            # Pass one note from one racer to another. The server never looks
+            # inside; it is the browsers agreeing how to reach each other.
+            if key not in race["players"]:
+                raise ApiError(403, "You are not in that race.")
+            target = (body.get("to") or "").strip().lower()
+            mate = race["players"].get(target)
+            if mate is None:
+                raise ApiError(404, "No such racer.")
+            note = str(body.get("note") or "")[:16000]
+            box = mate.setdefault("inbox", [])
+            box.append({"from": user["name"], "note": note})
+            del box[:-40]                       # keep it from growing forever
         elif doing == "leave":
             race["players"].pop(key, None)
             if not race["players"]:
@@ -919,6 +954,8 @@ class Handler(BaseHTTPRequestHandler):
             "ms": None,
             "pen": OK,
             "name_style": user.get("wearing", {}).get("name_style", "plain"),
+            "camera": False,
+            "inbox": [],      # WebRTC setup notes waiting for this player
         }
 
     def fresh_code(self, races):
@@ -968,6 +1005,43 @@ class Handler(BaseHTTPRequestHandler):
 # run
 # --------------------------------------------------------------------------
 
+def ensure_certificate():
+    """A self-signed certificate, made once and kept in data/.
+
+    Browsers only hand over a camera on a secure page. localhost counts as
+    secure whatever you do, but a plain http:// address on your Wi-Fi does not
+    -- which is exactly where a race between two people happens. Serving over
+    https fixes that. The certificate is signed by nobody, so each device will
+    ask once whether you trust it; say yes and the camera becomes available.
+    """
+    cert = os.path.join(DATA_DIR, "cert.pem")
+    key = os.path.join(DATA_DIR, "key.pem")
+    if os.path.exists(cert) and os.path.exists(key):
+        return cert, key
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+    address = lan_ip()
+    subject = "/CN=Cube Timer"
+    names = "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:%s" % address
+    command = [
+        "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+        "-keyout", key, "-out", cert, "-days", "825",
+        "-subj", subject, "-addext", names,
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True)
+    except (OSError, subprocess.CalledProcessError) as err:
+        detail = getattr(err, "stderr", b"") or b""
+        raise SystemExit(
+            "\n  Could not make a certificate for https.\n  %s\n"
+            % detail.decode("utf-8", "replace").strip()[:300])
+    try:
+        os.chmod(key, 0o600)
+    except OSError:
+        pass
+    return cert, key
+
+
 def lan_ip():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -979,7 +1053,7 @@ def lan_ip():
         sock.close()
 
 
-def run(port, host, demo=False):
+def run(port, host, demo=False, secure=False):
     global SECRET, DEMO
     DEMO = DEMO or demo
     SECRET = server_secret()
@@ -987,12 +1061,27 @@ def run(port, host, demo=False):
     if not os.path.exists(DB_PATH):
         save_db(load_db())
     httpd = ThreadingHTTPServer((host, port), Handler)
+
+    scheme = "http"
+    if secure:
+        cert, key = ensure_certificate()
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(cert, key)
+        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+        scheme = "https"
+
     print("\n  Cube Timer is running.\n")
     if DEMO:
         print("    DEMO MODE - everything in the store is free.")
         print("    Do not run a public site this way.\n")
-    print("    on this Mac:   http://localhost:%d" % port)
-    print("    on your phone: http://%s:%d   (same Wi-Fi)" % (lan_ip(), port))
+    print("    on this Mac:   %s://localhost:%d" % (scheme, port))
+    print("    on your phone: %s://%s:%d   (same Wi-Fi)" % (scheme, lan_ip(), port))
+    if secure:
+        print("\n    The certificate is signed by nobody, so each device will")
+        print("    warn you once. Accept it, and cameras will work in races.")
+    else:
+        print("\n    Cameras in races need --https; browsers will not hand one")
+        print("    over on a plain address that is not localhost.")
     print("\n  Press Control-C to stop.\n")
     try:
         httpd.serve_forever()
@@ -1007,5 +1096,7 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--demo", action="store_true",
                         help="make everything in the store free, for trying ideas out")
+    parser.add_argument("--https", action="store_true",
+                        help="serve over https, which is what lets races use the camera")
     args = parser.parse_args()
-    run(args.port, args.host, args.demo)
+    run(args.port, args.host, args.demo, args.https)
