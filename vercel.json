@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "outputDirectory": "public",
+  "functions": {
+    "api/index.py": {
+      "memory": 1024,
+      "maxDuration": 30,
+      "includeFiles": "server.py"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/:action",
+      "destination": "/api/index?action=:action"
+    }
+  ]
+}

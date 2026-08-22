@@ -17,6 +17,42 @@ To use a different port:
 
     python3 server.py --port 8123
 
+## Putting it on the internet (Vercel)
+
+Vercel never runs `server.py` -- there is no long-lived process there, and the
+filesystem is read-only. `api/index.py` is the adapter: it reuses every bit of
+logic out of `server.py` and swaps only the two functions that touch disk, so
+the database lives in Vercel Blob storage instead. There is one source of
+truth for the rules, and two ways to serve them.
+
+Deploying:
+
+1. Import the repository in Vercel. `vercel.json` already points the output
+   directory at `public/` and routes `/api/*` to the function, so there is
+   nothing to configure.
+2. **Attach a Blob store**, or nothing can be saved. In the dashboard open
+   Storage, create a Blob store, connect it to the project. That sets
+   `BLOB_READ_WRITE_TOKEN` for you.
+3. Set `CUBE_SECRET` to anything long and random. It signs sign-in tokens.
+   Without it everyone is signed out whenever Vercel starts a fresh instance.
+4. Redeploy so the new environment variables are picked up.
+
+If you skip step 2 the site still loads and the store is still browsable --
+reads just come back empty -- and the first attempt to make an account explains
+exactly what is missing rather than failing silently.
+
+**A real limitation.** Serverless instances do not share memory, so the lock
+that `server.py` uses on your Mac does not exist on Vercel. The whole database
+is one JSON document, read and written whole. If two people finish a solve at
+the very same moment, one of those writes can quietly overwrite the other. That
+is fine for you and a few friends; it is not fine for a busy public leaderboard.
+Outgrowing it means moving to a real database with per-row writes (Vercel
+Postgres, or any hosted SQLite), which is a change to storage only -- the rules
+in `server.py` would not have to move.
+
+Running it on your own Mac has none of this problem, because there really is
+one process with one lock.
+
 ## What is in it
 
 **Timer.** Hold space (or press and hold the pad on a phone), release to start,
@@ -76,6 +112,8 @@ tokens are HMAC-signed and last 30 days.
 ## Where things live
 
     server.py           the whole backend: storage, accounts, API
+    api/index.py        the same backend on Vercel, storing to Blob
+    vercel.json         output directory and /api routing for Vercel
     public/index.html   markup
     public/app.js       timer, statistics, views
     public/scramble.js  scramble generation
