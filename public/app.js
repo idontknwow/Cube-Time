@@ -563,7 +563,6 @@ function raceStartLocal() {
 function adoptRace(view) {
   race.offset = view.now * 1000 - Date.now();
   race.view = view;
-  (view.inbox || []).forEach((note) => handleNote(note.from, note.note));
   renderRace();
   paintRaceStrip();
 
@@ -595,10 +594,6 @@ async function raceDo(body) {
 function leaveRaceLocally() {
   stopRacePolling();
   clearTimeout(race.starter);
-  if (cam.on) stopCamera(true);        // never leave a camera running behind you
-  cam.peers.forEach((peer) => peer.close());
-  cam.peers.clear();
-  document.querySelectorAll('.race-cams .cam-tile').forEach((el) => el.remove());
   race.view = null; race.armed = false; race.submitted = false;
   $('race-strip').hidden = true;
   renderRace();
@@ -612,7 +607,6 @@ function startRacePolling() {
       const view = await api('race?code=' + encodeURIComponent(race.view.code));
       race.offset = view.now * 1000 - Date.now();
       race.view = view;
-      (view.inbox || []).forEach((note) => handleNote(note.from, note.note));
       renderRace();
       paintRaceStrip();
       if (view.start_at && !race.armed) adoptRace(view);
@@ -665,220 +659,28 @@ function beginRaceSolve() {
 
 const racing = () => !!(race.view && race.view.start_at);
 
-/* Built once and then only updated in places. The strip is repainted on every
-   animation frame while a race runs, and rebuilding it wholesale would tear
-   out the video elements a dozen times a second. */
-function stripShell() {
-  const strip = $('race-strip');
-  if (!strip.__built) {
-    strip.innerHTML = '<div class="race-head"></div>'
-      + '<div class="race-cams"></div><div class="race-lanes"></div>';
-    strip.__built = true;
-  }
-  return strip;
-}
-
 function paintRaceStrip() {
-  const strip = stripShell();
-  if (!race.view) { strip.hidden = true; return; }
+  const strip = $('race-strip');
+  if (!racing()) { strip.hidden = true; return; }
   strip.hidden = false;
-
-  paintCameras();
-
-  const lanes = strip.querySelector('.race-lanes');
-  if (!racing()) {
-    strip.querySelector('.race-head').innerHTML =
-      `<span>Race ${esc(race.view.code)}</span><span>waiting to start</span>`;
-    lanes.innerHTML = '';
-    return;
-  }
 
   const started = raceStartLocal();
   const running = Math.max(0, Date.now() - started);
   const slowest = Math.max(running, ...race.view.players.map((p) => p.ms || 0), 1);
 
-  strip.querySelector('.race-head').innerHTML =
-    `<span>Race ${esc(race.view.code)}</span>`
-    + `<span>${race.view.players.filter((p) => p.done).length} of `
-    + `${race.view.players.length} finished</span>`;
-
-  lanes.innerHTML = race.view.players.map((p) => {
-    const shown = p.done ? p.ms : running;
-    const width = Math.min(100, (shown / slowest) * 100);
-    return `<div class="race-lane ${p.done ? 'is-done' : ''} ${p.name === race.view.you ? 'is-you' : ''}">
-      <span class="who-name">${nameHtml(p.name, p.name_style)}</span>
-      <span class="lane-time">${esc(fmt(shown, p.pen))}</span>
-      <span class="race-bar"><i style="width:${width}%"></i></span>
-    </div>`;
-  }).join('');
-}
-
-/* ------------------------------------------------------------- the camera */
-/* Video goes straight from one browser to the other. The server only carries
-   the handful of notes the two browsers need to find each other, and never
-   sees a frame. Nothing turns on until you ask it to. */
-
-const cam = { stream: null, on: false, peers: new Map() };
-
-const cameraAllowed = () => window.isSecureContext
-  && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
-  && typeof RTCPeerConnection !== 'undefined';
-
-async function startCamera() {
-  if (cam.on) return;
-  if (!cameraAllowed()) {
-    toast('Cameras need a secure page. Start the server with --https.', true);
-    return;
-  }
-  try {
-    cam.stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 320 }, height: { ideal: 240 } },
-      audio: false,                       // pictures only; nobody wants a hot mic
-    });
-  } catch (err) {
-    toast('No camera: ' + err.message, true);
-    return;
-  }
-  cam.on = true;
-  renderRace();
-  paintRaceStrip();
-  await raceDo({ do: 'camera', code: race.view.code, on: true });
-}
-
-function stopCamera(quiet) {
-  if (cam.stream) cam.stream.getTracks().forEach((t) => t.stop());
-  cam.stream = null;
-  cam.on = false;
-  cam.peers.forEach((peer) => peer.close());
-  cam.peers.clear();
-  document.querySelectorAll('.race-cams .cam-tile').forEach((el) => el.remove());
-  renderRace();
-  paintRaceStrip();
-  if (!quiet && race.view) raceDo({ do: 'camera', code: race.view.code, on: false });
-}
-
-const sendNote = (to, payload) =>
-  post('race', { do: 'signal', code: race.view.code, to, note: JSON.stringify(payload) })
-    .catch(() => {});
-
-function peerFor(name) {
-  if (cam.peers.has(name)) return cam.peers.get(name);
-  // No STUN or relay: on the same Wi-Fi the browsers can see each other
-  // directly, and this keeps every part of it inside your own network.
-  const peer = new RTCPeerConnection({ iceServers: [] });
-  peer.__waiting = [];        // candidates that arrived before the description
-  cam.peers.set(name, peer);
-
-  if (cam.stream) cam.stream.getTracks().forEach((t) => peer.addTrack(t, cam.stream));
-  peer.onicecandidate = (e) => {
-    if (e.candidate) sendNote(name, { kind: 'ice', candidate: e.candidate });
-  };
-  peer.ontrack = (e) => {
-    const tile = cameraTile(name);
-    const video = tile.querySelector('video');
-    if (video.srcObject !== e.streams[0]) video.srcObject = e.streams[0];
-  };
-  peer.onconnectionstatechange = () => {
-    if (['failed', 'closed'].includes(peer.connectionState)) {
-      peer.close();
-      cam.peers.delete(name);
-    }
-  };
-  return peer;
-}
-
-/* Whoever's name sorts first makes the call, so both sides never ring at once. */
-const iCall = (them) => (race.view.you || '').toLowerCase() < them.toLowerCase();
-
-async function connectTo(name) {
-  const peer = peerFor(name);
-  if (!iCall(name) || peer.__called) return;
-  peer.__called = true;
-  const offer = await peer.createOffer();
-  await peer.setLocalDescription(offer);
-  sendNote(name, { kind: 'offer', sdp: peer.localDescription });
-}
-
-/* Candidates routinely arrive before the description they belong to -- the
-   notes are collected by polling, so a batch can land in either order, and a
-   candidate added too early is simply refused. They are held until the
-   description is in place and then handed over; dropping them is what leaves
-   a connection sitting at "new" forever. */
-async function drainCandidates(peer) {
-  const waiting = peer.__waiting.splice(0);
-  for (const candidate of waiting) {
-    try { await peer.addIceCandidate(candidate); } catch (_) { /* stale */ }
-  }
-}
-
-async function handleNote(from, raw) {
-  let payload;
-  try { payload = JSON.parse(raw); } catch (_) { return; }
-  const peer = peerFor(from);
-  try {
-    if (payload.kind === 'offer') {
-      await peer.setRemoteDescription(payload.sdp);
-      const answer = await peer.createAnswer();
-      await peer.setLocalDescription(answer);
-      sendNote(from, { kind: 'answer', sdp: peer.localDescription });
-      await drainCandidates(peer);
-    } else if (payload.kind === 'answer') {
-      if (!peer.currentRemoteDescription) {
-        await peer.setRemoteDescription(payload.sdp);
-        await drainCandidates(peer);
-      }
-    } else if (payload.kind === 'ice') {
-      if (peer.remoteDescription) await peer.addIceCandidate(payload.candidate);
-      else peer.__waiting.push(payload.candidate);
-    }
-  } catch (err) {
-    // A note that arrives out of order is not worth shouting about.
-  }
-}
-
-function cameraTile(name) {
-  const cams = stripShell().querySelector('.race-cams');
-  let tile = cams.querySelector(`[data-cam="${CSS.escape(name)}"]`);
-  if (!tile) {
-    tile = document.createElement('div');
-    tile.className = 'cam-tile';
-    tile.dataset.cam = name;
-    tile.innerHTML = '<video autoplay playsinline></video><span></span>';
-    tile.querySelector('span').textContent = name;
-    cams.appendChild(tile);
-  }
-  return tile;
-}
-
-/* Keep the tiles and the connections in step with who has a camera on. */
-function paintCameras() {
-  const cams = stripShell().querySelector('.race-cams');
-  if (!race.view) { cams.innerHTML = ''; return; }
-  const me = race.view.you;
-
-  if (cam.on) {
-    const tile = cameraTile(me);
-    tile.classList.add('is-you');
-    const video = tile.querySelector('video');
-    video.muted = true;
-    if (video.srcObject !== cam.stream) video.srcObject = cam.stream;
-  }
-
-  const live = new Set(race.view.players.filter((p) => p.camera).map((p) => p.name));
-  race.view.players.forEach((p) => {
-    if (p.name === me || !p.camera || !cam.on) return;
-    connectTo(p.name);
-  });
-
-  cams.querySelectorAll('.cam-tile').forEach((tile) => {
-    const who = tile.dataset.cam;
-    if (who === me ? !cam.on : !live.has(who)) {
-      const peer = cam.peers.get(who);
-      if (peer) { peer.close(); cam.peers.delete(who); }
-      tile.remove();
-    }
-  });
-  cams.hidden = !cams.children.length;
+  strip.innerHTML = `
+    <div class="race-head"><span>Race ${esc(race.view.code)}</span>
+      <span>${race.view.players.filter((p) => p.done).length} of
+        ${race.view.players.length} finished</span></div>
+    ${race.view.players.map((p) => {
+      const shown = p.done ? p.ms : running;
+      const width = Math.min(100, (shown / slowest) * 100);
+      return `<div class="race-lane ${p.done ? 'is-done' : ''} ${p.name === race.view.you ? 'is-you' : ''}">
+        <span class="who-name">${nameHtml(p.name, p.name_style)}</span>
+        <span class="lane-time">${esc(fmt(shown, p.pen))}</span>
+        <span class="race-bar"><i style="width:${width}%"></i></span>
+      </div>`;
+    }).join('')}`;
 }
 
 function renderRace() {
@@ -924,29 +726,12 @@ function renderRace() {
       ${!view.start_at && !waiting && me && !me.ready
         ? '<button class="mini" id="race-ready">My cube is scrambled</button>' : ''}
       ${waiting ? '<span class="muted">Waiting for someone to join…</span>' : ''}
-      <button class="mini ${cam.on ? 'is-on' : ''}" id="race-cam">
-        ${cam.on ? 'Camera on — turn off' : 'Turn on camera'}</button>
       <button class="mini danger" id="race-leave">${everyoneDone ? 'Done' : 'Leave'}</button>
-    </div>
-    ${cam.on
-      ? '<p class="muted cam-note">Your camera is on and going straight to the '
-        + 'other racers. It stops when you leave.</p>'
-      : cameraAllowed()
-        ? '<p class="muted">Optional: show your face to the others while you race.</p>'
-        : '<p class="muted">Cameras need a secure page — start the server with '
-          + '<code>--https</code>, or open it on localhost.</p>'}`;
+    </div>`;
 
   const ready = $('race-ready');
   if (ready) ready.onclick = () => raceDo({ do: 'ready', code: view.code });
-  $('race-cam').onclick = () => (cam.on ? stopCamera() : startCamera());
-  /* Tear down here first rather than waiting on the reply: the server only
-     says "left" when the last person goes, so trusting it would leave your
-     camera running whenever somebody else was still in the race. */
-  $('race-leave').onclick = () => {
-    const code = view.code;
-    leaveRaceLocally();
-    post('race', { do: 'leave', code }).catch(() => {});
-  };
+  $('race-leave').onclick = () => raceDo({ do: 'leave', code: view.code });
 }
 
 async function submitRaceFinish(solve) {

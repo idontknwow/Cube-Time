@@ -5,5 +5,3 @@ data/secret.txt
 
 # Vercel build output
 .vercel
-data/cert.pem
-data/key.pem
