@@ -200,87 +200,136 @@ export function readToken(token) {
   return { base, quarters };
 }
 
-const CAMERA = 11;      // how far back the eye sits
-const LENS = 30;        // and how much it magnifies
+
+/* -- turning it into a picture --------------------------------------------
+
+   The cube is built as twenty-six little cubies rather than fifty-four loose
+   stickers. That matters for two reasons: a solid cubie hides what is behind
+   it, so nothing shows through from the far side; and when a layer swings out
+   you see the dark inside of the cube, which is what makes it read as a solid
+   object instead of a flat pattern.
+
+   Each cubie is drawn as six squares -- coloured where it meets the outside
+   world, plastic everywhere else -- and the whole lot is sorted by how far
+   away the cubie is. Cubies never pass through each other, so sorting them
+   as wholes is enough; sorting loose squares is what goes wrong.          */
+
+const CUBIE = 0.47;            // half a cubie, leaving a hairline between them
+const PLASTIC = '#131316';
+const CAMERA = 8.4;            // eye close enough for the near face to loom
+const LENS = 21;
+
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
 function project(p) {
   const scale = LENS / (CAMERA - p[2]);
   return [p[0] * scale, -p[1] * scale];
 }
 
-/* A light fixed to the camera, so turning the cube shades it the way a real
-   one catches the light instead of every face reading flat. */
-const LAMP = [0.32, 0.55, 0.77];
+/* A lamp fixed to the camera, so turning the cube shades it the way a real
+   one catches the light rather than every face reading the same. */
+const LAMP = [0.3, 0.56, 0.77];
 
 function shade(hex, normal) {
-  const lit = Math.max(0, normal[0] * LAMP[0] + normal[1] * LAMP[1] + normal[2] * LAMP[2]);
-  const k = 0.55 + 0.45 * lit;
+  const lit = Math.max(0, dot(normal, LAMP));
+  const k = 0.5 + 0.5 * lit;
   const n = parseInt(hex.slice(1), 16);
   const mix = (v) => Math.round(Math.min(255, v * k));
   return `rgb(${mix((n >> 16) & 255)},${mix((n >> 8) & 255)},${mix(n & 255)})`;
 }
 
+/** Every cubie position except the core, which is never seen. */
+const CUBIES = [];
+for (let x = -1; x <= 1; x++) {
+  for (let y = -1; y <= 1; y++) {
+    for (let z = -1; z <= 1; z++) {
+      if (x || y || z) CUBIES.push([x, y, z]);
+    }
+  }
+}
+
 /**
  * Draw the cube.
  *   yaw, pitch  which way it is turned towards you, in radians
- *   turn        { base, quarters, progress } to catch a move mid-flight
- *   dim         fade the stickers the turn does not touch
+ *   turn        { base, quarters, progress } to catch a move mid-swing
+ *   dim         fade back everything the turn does not carry
  */
 export function cubeSvg(state, options = {}) {
   const yaw = options.yaw === undefined ? -0.62 : options.yaw;
-  const pitch = options.pitch === undefined ? -0.5 : options.pitch;
+  const pitch = options.pitch === undefined ? 0.5 : options.pitch;
   const turn = options.turn || null;
   const spec = turn ? TURNS[turn.base] : null;
   const sweep = spec
     ? spec.sign * (turn.quarters || 1) * (Math.PI / 2) * (turn.progress || 0)
     : 0;
 
-  const faces = [];
-  for (const face of FACES) {
-    for (let i = 0; i < 9; i++) {
-      const { middle, corners } = stickerQuad(face, i);
-      const moving = spec ? spec.holds(middle) : false;
+  const toView = (p, moving) => {
+    const q = moving && sweep ? SPIN[spec.axis](p, sweep) : p;
+    return spinX(spinY(q, yaw), pitch);
+  };
 
-      const place = (p) => {
-        let q = moving ? SPIN[spec.axis](p, sweep) : p;
-        return spinX(spinY(q, yaw), pitch);
-      };
-      const seen = corners.map(place);
-      const centre = place(middle);
-      let normal = FRAME[face].normal;
-      if (moving) normal = SPIN[spec.axis](normal, sweep);
-      normal = spinX(spinY(normal, yaw), pitch);
+  const panels = [];
+  for (const home of CUBIES) {
+    const moving = spec ? spec.holds(home) : false;
+    const seat = toView(home, moving);
 
-      if (normal[2] <= 0.02) continue;                 // pointing away from us
-      faces.push({
-        depth: centre[2],
-        points: seen.map(project),
-        fill: shade(COLOURS[state[face][i]], normal),
+    for (const face of FACES) {
+      const { normal, col, row } = FRAME[face];
+      const outside = dot(home, normal) === 1;
+
+      // Every transform here is a rotation about the origin, so a direction
+      // can go through the same one as a point.
+      const dir = toView(normal, moving);
+      if (dir[2] <= 0.001) continue;                  // pointing away from us
+
+      const middle = [
+        home[0] + normal[0] * CUBIE,
+        home[1] + normal[1] * CUBIE,
+        home[2] + normal[2] * CUBIE,
+      ];
+      const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => toView([
+        middle[0] + col[0] * a * CUBIE + row[0] * b * CUBIE,
+        middle[1] + col[1] * a * CUBIE + row[1] * b * CUBIE,
+        middle[2] + col[2] * a * CUBIE + row[2] * b * CUBIE,
+      ], moving)).map(project);
+
+      let fill = PLASTIC;
+      if (outside) {
+        const index = (dot(home, row) + 1) * 3 + (dot(home, col) + 1);
+        fill = shade(COLOURS[state[face][index]], dir);
+      }
+      panels.push({
+        seat: seat[2],
+        corners,
+        fill,
+        outside,
         faded: spec && options.dim && !moving,
       });
     }
   }
 
-  faces.sort((a, b) => a.depth - b.depth);             // far ones first
+  panels.sort((a, b) => a.seat - b.seat);            // far cubies painted first
 
-  const body = [];
-  const tops = [];
-  for (const quad of faces) {
-    const outline = quad.points.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
-    body.push(`<polygon points="${outline}" fill="#0d0d10"/>`);
-    const middle = quad.points.reduce((a, p) => [a[0] + p[0] / 4, a[1] + p[1] / 4], [0, 0]);
-    const inner = quad.points
-      .map((p) => [middle[0] + (p[0] - middle[0]) * 0.84, middle[1] + (p[1] - middle[1]) * 0.84])
+  const drawn = panels.map((panel) => {
+    const outline = panel.corners
       .map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
-    tops.push(`<polygon points="${inner}" fill="${quad.fill}"`
-      + ` stroke="${quad.fill}" stroke-width="1.1" stroke-linejoin="round"`
-      + (quad.faded ? ' opacity="0.4"' : '') + '/>');
-  }
+    if (!panel.outside) {
+      return `<polygon points="${outline}" fill="${PLASTIC}"/>`;
+    }
+    // The plastic sits behind, and the sticker is inset within it -- which is
+    // what draws the dark grid between one sticker and the next.
+    const mid = panel.corners.reduce((a, p) => [a[0] + p[0] / 4, a[1] + p[1] / 4], [0, 0]);
+    const sticker = panel.corners
+      .map((p) => [mid[0] + (p[0] - mid[0]) * 0.82, mid[1] + (p[1] - mid[1]) * 0.82])
+      .map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
+    return `<polygon points="${outline}" fill="${PLASTIC}"/>`
+      + `<polygon points="${sticker}" fill="${panel.fill}"`
+      + ` stroke="${panel.fill}" stroke-width="0.09" stroke-linejoin="round"`
+      + (panel.faded ? ' opacity="0.38"' : '') + '/>';
+  }).join('');
 
-  // Painted in pairs so a nearer sticker's plastic never covers a further one.
-  const layers = faces.map((_, i) => body[i] + tops[i]).join('');
-  return `<svg class="cube3d" viewBox="-10 -10 20 20" xmlns="http://www.w3.org/2000/svg"`
-    + ` role="img" aria-label="A cube you can turn by dragging">${layers}</svg>`;
+  return `<svg class="cube3d" viewBox="-10.5 -10.5 21 21" xmlns="http://www.w3.org/2000/svg"`
+    + ` role="img" aria-label="A cube you can turn by dragging">${drawn}</svg>`;
 }
 
 /** Which events this drawing is honest about. */

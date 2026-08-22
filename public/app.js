@@ -394,7 +394,10 @@ function drawScramble() {
 
 /* Every cube on the page can be dragged around to see the back of it. The
    angle is kept on the element, so a redraw kelps whatever you turned it to. */
-const DEFAULT_VIEW = { yaw: -0.62, pitch: -0.5 };
+/* Looking slightly down on the cube, so you see U, F and R -- the view every
+   algorithm is written for. Tilted the other way you get the bottom, which is
+   the wrong way round for anything that talks about "the top layer". */
+const DEFAULT_VIEW = { yaw: -0.62, pitch: 0.5 };
 
 function viewOf(host) {
   if (!host.__view) host.__view = { ...DEFAULT_VIEW };

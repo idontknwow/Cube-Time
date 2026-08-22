@@ -129,12 +129,20 @@ Tap one to watch it through.
 The drawing is 3x3 only; it would be a lie for 2x2 or 4x4, so those show
 nothing.
 
-`public/cube.js` holds all of this. Stickers are real positions in space rather
-than cells in a grid, which is why a move can be drawn half-finished: the ones
-belonging to that layer are simply spun, and a wide turn is nothing more than a
-more generous test of which ones belong. The drawing is checked against the
-move engine rather than by eye -- a move drawn at full swing has to put every
-sticker exactly where the engine says it goes, across every angle.
+`public/cube.js` holds all of this. The cube is built as twenty-six little
+cubies rather than fifty-four loose stickers, which is what makes it read as a
+solid object: a cubie hides what is behind it, and when a layer swings out you
+see the dark inside of the cube. Each cubie is six squares -- coloured where it
+meets the outside world, plastic everywhere else -- painted furthest-away
+first. Sorting whole cubies is what works; sorting loose squares is what goes
+wrong once a layer is halfway round.
+
+A move can be drawn half-finished because a sticker is a position in space
+rather than a cell in a grid: the cubies in that layer are simply spun, and a
+wide turn is nothing more than a more generous test of which ones belong. The
+drawing is checked against the move engine rather than by eye -- a move drawn
+at full swing has to put every sticker exactly where the engine says it goes,
+across every angle.
 
 **Rewards.** Solving earns cubies — one per solve, 25 for a new best single,
 15 for a new best average, 10 for entering the daily battle. Cubies buy
