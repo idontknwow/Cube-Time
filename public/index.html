@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#12141c">
+<title>Cube Timer</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%235b8cff'/><g fill='%23fff'><rect x='6' y='6' width='7' height='7' rx='1.5'/><rect x='19' y='6' width='7' height='7' rx='1.5'/><rect x='6' y='19' width='7' height='7' rx='1.5'/><rect x='19' y='19' width='7' height='7' rx='1.5'/></g></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">Cube&nbsp;Timer</div>
+  <nav class="tabs" id="tabs">
+    <button class="tab is-on" data-view="timer">Timer</button>
+    <button class="tab" data-view="learn">Learn</button>
+    <button class="tab" data-view="compete">Compete</button>
+    <button class="tab" data-view="you">You</button>
+  </nav>
+  <button class="who" id="who">Sign in</button>
+</header>
+
+<main>
+
+  <!-- ---------------------------------------------------------- timer -->
+  <section class="view is-on" id="view-timer">
+    <div class="scramble-bar">
+      <div class="scramble" id="scramble">—</div>
+      <div class="scramble-tools">
+        <select id="event" aria-label="Event"></select>
+        <button class="mini" id="new-scramble">New scramble</button>
+        <label class="mini toggle"><input type="checkbox" id="inspection"> 15s inspection</label>
+      </div>
+    </div>
+
+    <div class="pad" id="pad" tabindex="0" role="button"
+         aria-label="Hold to get ready, release to start the timer">
+      <div class="time fx" id="time">0.000</div>
+      <div class="hint" id="hint">Hold <kbd>space</kbd> — or press and hold here</div>
+    </div>
+
+    <div class="after" id="after" hidden>
+      <button class="mini" data-pen="0">OK</button>
+      <button class="mini" data-pen="2">+2</button>
+      <button class="mini" data-pen="-1">DNF</button>
+      <button class="mini danger" data-pen="del">Delete</button>
+    </div>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="session">
+      <div class="session-head">
+        <h2>This session</h2>
+        <button class="mini danger" id="clear-session">Clear</button>
+      </div>
+      <ol class="solves" id="solves"></ol>
+      <p class="session-hint">Tap a solve to remove it &mdash; or press
+        <kbd>Esc</kbd> mid-solve to cancel without recording.</p>
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------------- learn -->
+  <section class="view" id="view-learn">
+    <div class="level-picker" id="level-picker"></div>
+    <div id="lesson"></div>
+    <details class="notation">
+      <summary>Notation reference</summary>
+      <dl id="notation"></dl>
+    </details>
+  </section>
+
+  <!-- -------------------------------------------------------- compete -->
+  <section class="view" id="view-compete">
+    <div class="panel">
+      <h2>Daily battle</h2>
+      <p class="muted">Everyone gets the same scramble. One attempt, once a day.</p>
+      <div id="daily"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Leaderboard</h2>
+      <div class="filters">
+        <select id="lb-event" aria-label="Leaderboard event"></select>
+        <select id="lb-metric" aria-label="Leaderboard metric">
+          <option value="single">Best single</option>
+          <option value="ao5">Best ao5</option>
+          <option value="ao12">Best ao12</option>
+        </select>
+      </div>
+      <div id="leaderboard"></div>
+    </div>
+
+    <div class="panel" id="profile-panel" hidden>
+      <h2 id="profile-name"></h2>
+      <div id="profile"></div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------ you -->
+  <section class="view" id="view-you">
+    <div class="panel" id="account"></div>
+    <div class="panel">
+      <h2>Rewards</h2>
+      <p class="muted">One cubie per solve, 25 for a new best single, 15 for a
+        new best average, 10 for entering the daily battle. Spend them on how
+        the app looks, how your name appears to everyone else, and what happens
+        when you stop the timer.</p>
+      <div id="shop"></div>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast" id="toast" hidden></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

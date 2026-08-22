@@ -1,0 +1,4 @@
+data/db.json
+data/secret.txt
+.DS_Store
+*.tmp-*
