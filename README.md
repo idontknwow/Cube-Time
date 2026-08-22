@@ -115,11 +115,26 @@ changes -- who joined, who is ready, who finished. A finish is refused before
 the countdown ends, and a time longer than the race has been running is
 refused too, which catches a drifting clock as readily as someone trying it on.
 
-**A cube you can see.** The timer draws the scramble as an unfolded cube, so
-you can check you scrambled it right. In Learn, every algorithm is clickable
-and runs on a cube move by move, with play, step and reset -- the 21 PLLs are
-something to watch rather than a wall of notation to be trusted. The drawing is
-3x3 only; a 3x3 net would be a lie for 2x2 or 4x4, so those show nothing.
+**A cube you can see, and turn.** The timer draws the scramble as a cube in
+three dimensions, so you can check you scrambled it right. Drag any cube to
+look at it from another angle; double-click to put it back.
+
+In Learn, every algorithm is clickable and *runs*, one layer swinging round at
+a time -- watching which way a layer goes is the whole point, and a picture
+that jumps between two positions tells you nothing. And every symbol in the
+notation has its own cube, frozen part-way through its own move with the rest
+faded back, so you can see at a glance which slab of the cube it takes with it.
+Tap one to watch it through.
+
+The drawing is 3x3 only; it would be a lie for 2x2 or 4x4, so those show
+nothing.
+
+`public/cube.js` holds all of this. Stickers are real positions in space rather
+than cells in a grid, which is why a move can be drawn half-finished: the ones
+belonging to that layer are simply spun, and a wide turn is nothing more than a
+more generous test of which ones belong. The drawing is checked against the
+move engine rather than by eye -- a move drawn at full swing has to put every
+sticker exactly where the engine says it goes, across every angle.
 
 **Rewards.** Solving earns cubies — one per solve, 25 for a new best single,
 15 for a new best average, 10 for entering the daily battle. Cubies buy

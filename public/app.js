@@ -1,6 +1,7 @@
 import { scrambleFor, EVENTS, EVENT_LIST, minimumFor } from './scramble.js';
 import { LEVELS, NOTATION } from './learn.js';
-import { afterSequence, netSvg, solved, applyMove, tokensOf, clone, CAN_DRAW } from './cube.js';
+import { afterSequence, cubeSvg, solved, applyMove, tokensOf, clone, CAN_DRAW,
+         readToken } from './cube.js';
 
 /* ------------------------------------------------------------------ state */
 
@@ -384,11 +385,63 @@ function nextScramble() {
 }
 
 /* Show what you are actually about to solve. Only for the events this
-   drawing is honest about -- a 3x3 net would be a lie for 2x2 or 4x4. */
+   drawing is honest about -- a 3x3 cube would be a lie for 2x2 or 4x4. */
 function drawScramble() {
   const holder = $('scramble-cube');
   if (!CAN_DRAW.has(state.event)) { holder.innerHTML = ''; return; }
-  holder.innerHTML = netSvg(afterSequence(state.scramble));
+  paintCube(holder, afterSequence(state.scramble));
+}
+
+/* Every cube on the page can be dragged around to see the back of it. The
+   angle is kept on the element, so a redraw kelps whatever you turned it to. */
+const DEFAULT_VIEW = { yaw: -0.62, pitch: -0.5 };
+
+function viewOf(host) {
+  if (!host.__view) host.__view = { ...DEFAULT_VIEW };
+  return host.__view;
+}
+
+function paintCube(host, cubeState, extra = {}) {
+  if (cubeState) host.__state = cubeState;
+  const view = viewOf(host);
+  host.innerHTML = cubeSvg(host.__state, { ...view, ...extra });
+  if (!host.__draggable) makeDraggable(host);
+}
+
+function makeDraggable(host) {
+  host.__draggable = true;
+  host.classList.add('is-draggable');
+  let from = null;
+
+  host.addEventListener('pointerdown', (e) => {
+    from = { x: e.clientX, y: e.clientY, ...viewOf(host) };
+    host.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  host.addEventListener('pointermove', (e) => {
+    if (!from) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const view = viewOf(host);
+    view.yaw = from.yaw + (e.clientX - from.x) * 0.011;
+    // Stop short of straight up or down, where the cube would flip over.
+    view.pitch = Math.max(-1.45, Math.min(1.45, from.pitch + (e.clientY - from.y) * 0.011));
+    paintCube(host, null, host.__extra || {});
+  });
+  const release = (e) => {
+    if (from && e && e.pointerId !== undefined && host.hasPointerCapture(e.pointerId)) {
+      host.releasePointerCapture(e.pointerId);
+    }
+    from = null;
+  };
+  host.addEventListener('pointerup', release);
+  host.addEventListener('pointercancel', release);
+  host.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    host.__view = { ...DEFAULT_VIEW };
+    paintCube(host, null, host.__extra || {});
+  });
 }
 
 /* ------------------------------------------------------------ render: timer */
@@ -444,8 +497,49 @@ function renderLearn() {
       </div>`).join('')}
   `;
 
-  $('notation').innerHTML = NOTATION
-    .map(([term, meaning]) => `<dt>${esc(term)}</dt><dd>${esc(meaning)}</dd>`).join('');
+  paintNotation();
+}
+
+/* The notation reference: each symbol next to a cube frozen part-way through
+   the move, which says more than any sentence about which layer goes where. */
+function paintNotation() {
+  const grid = $('notation');
+  grid.innerHTML = NOTATION.map((entry, i) => `
+    <div class="note-card ${entry.plain ? 'is-face' : ''}">
+      <div class="cube-holder note-cube" data-note="${i}"></div>
+      <div class="note-text">
+        <strong>${esc(entry.symbol)}</strong>
+        <span class="note-name">${esc(entry.name)}</span>
+        <span class="note-what">${esc(entry.what)}</span>
+      </div>
+    </div>`).join('');
+
+  grid.querySelectorAll('[data-note]').forEach((host) => {
+    const entry = NOTATION[+host.dataset.note];
+    const parsed = readToken(entry.demo);
+    host.__extra = { turn: { ...parsed, progress: 0.34 }, dim: true };
+    paintCube(host, solved(), host.__extra);
+    host.addEventListener('click', () => playNotation(host, parsed));
+  });
+}
+
+function playNotation(host, parsed) {
+  if (host.__running) return;
+  host.__running = true;
+  const started = performance.now();
+  const span = 700;
+  const frame = () => {
+    const t = Math.min(1, (performance.now() - started) / span);
+    // out and back, so the cube ends where it started and can be replayed
+    const swing = t < 0.7 ? t / 0.7 : 1 - (t - 0.7) / 0.3;
+    host.__extra = { turn: { ...parsed, progress: swing }, dim: true };
+    paintCube(host, null, host.__extra);
+    if (t < 1) { requestAnimationFrame(frame); return; }
+    host.__extra = { turn: { ...parsed, progress: 0.34 }, dim: true };
+    paintCube(host, null, host.__extra);
+    host.__running = false;
+  };
+  requestAnimationFrame(frame);
 }
 
 /* ----------------------------------------------------------------- racing */
@@ -680,7 +774,8 @@ function openPlayer(algEl) {
   algEl.classList.add('is-open');
   algEl.after(host);
 
-  player = { alg: algEl, host, moves: tokensOf(sequence), index: 0, state: solved(), timer: null };
+  player = { alg: algEl, host, moves: tokensOf(sequence), index: 0,
+             state: solved(), timer: null, turning: false, built: false };
   paintPlayer();
 
   host.addEventListener('click', (e) => {
@@ -695,16 +790,45 @@ function openPlayer(algEl) {
 
 function resetPlayer() {
   player.index = 0;
+  player.turning = false;
   player.state = solved();
   paintPlayer();
 }
 
+/* Turn the layer through its quarter (or half) turn, then commit it. Watching
+   the layer move is the whole point -- a cube that jumps between two positions
+   tells you nothing about which way it went. */
+const TURN_MS = 320;
+
 function stepPlayer() {
-  if (!player) return false;
+  if (!player || player.turning) return false;
   if (player.index >= player.moves.length) { resetPlayer(); return false; }
-  applyMove(player.state, player.moves[player.index]);
-  player.index += 1;
-  paintPlayer();
+
+  const token = player.moves[player.index];
+  const parsed = readToken(token);
+  if (!parsed) {                       // nothing to animate; just take it
+    applyMove(player.state, token);
+    player.index += 1;
+    paintPlayer();
+    return true;
+  }
+
+  player.turning = true;
+  const started = performance.now();
+  const frame = () => {
+    if (!player || !player.turning) return;
+    const progress = Math.min(1, (performance.now() - started) / TURN_MS);
+    const eased = progress < 0.5
+      ? 2 * progress * progress
+      : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+    paintPlayer({ base: parsed.base, quarters: parsed.quarters, progress: eased });
+    if (progress < 1) { requestAnimationFrame(frame); return; }
+    applyMove(player.state, token);
+    player.index += 1;
+    player.turning = false;
+    paintPlayer();
+  };
+  requestAnimationFrame(frame);
   return true;
 }
 
@@ -717,27 +841,37 @@ function togglePlay() {
   if (player.timer) { pausePlayer(); return; }
   if (player.index >= player.moves.length) resetPlayer();
   player.timer = setInterval(() => {
-    if (player.index >= player.moves.length) { pausePlayer(); return; }
+    if (!player) return;
+    if (player.index >= player.moves.length && !player.turning) { pausePlayer(); return; }
     stepPlayer();
-  }, 520);
+  }, TURN_MS + 130);
   paintPlayer();
 }
 
-function paintPlayer() {
+function paintPlayer(turn) {
   if (!player) return;
-  const track = player.moves.map((move, i) => {
+  // Only the cube changes between frames, so the rest is built once.
+  if (!player.built) {
+    player.host.innerHTML = `<div class="cube-holder player-cube"></div>
+      <div class="track"></div>
+      <div class="controls">
+        <button class="mini" data-player="play"></button>
+        <button class="mini" data-player="step">Step</button>
+        <button class="mini" data-player="reset">Reset</button>
+      </div>`;
+    player.cube = player.host.querySelector('.player-cube');
+    player.built = true;
+  }
+  paintCube(player.cube, player.state, turn ? { turn } : {});
+
+  if (turn) return;                    // mid-turn, the labels have not changed
+  player.host.querySelector('.track').innerHTML = player.moves.map((move, i) => {
     const cls = i === player.index ? 'now' : i < player.index ? 'done' : '';
     return `<span class="${cls}">${esc(move)}</span>`;
   }).join('');
   const atEnd = player.index >= player.moves.length;
-  player.host.innerHTML = `
-    ${netSvg(player.state)}
-    <div class="track">${track}</div>
-    <div class="controls">
-      <button class="mini" data-player="play">${player.timer ? 'Pause' : atEnd ? 'Replay' : 'Play'}</button>
-      <button class="mini" data-player="step">Step</button>
-      <button class="mini" data-player="reset">Reset</button>
-    </div>`;
+  player.host.querySelector('[data-player="play"]').textContent =
+    player.timer ? 'Pause' : atEnd ? 'Replay' : 'Play';
 }
 
 /* ---------------------------------------------------------- render: compete */

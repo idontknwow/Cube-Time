@@ -113,37 +113,174 @@ export function afterSequence(sequence, from) {
   return state;
 }
 
-/* -- drawing --------------------------------------------------------------
-   The usual unfolded net, so every face is visible at once:
+/* == drawing it in three dimensions =======================================
 
-           U
-       L   F   R   B
-           D                                                              */
+   The cube sits at the origin, three units across, so every sticker centre
+   lands on whole numbers from -1 to 1 and the faces sit at +/-1.5. Each
+   sticker is a square in space; we spin the whole lot to face the camera,
+   throw away the ones pointing away from it, and paint what is left back
+   to front.
 
-const LAYOUT = { U: [3, 0], L: [0, 3], F: [3, 3], R: [6, 3], B: [9, 3], D: [3, 6] };
+   Because a sticker is a real position rather than a cell in a grid, a turn
+   can be drawn halfway through simply by spinning the stickers that belong
+   to that layer -- which is what makes a move legible at a glance.        */
 
-export function netSvg(state, cell = 13) {
-  const inset = cell * 0.09;
-  const width = 12 * cell;
-  const height = 9 * cell;
-  let squares = '';
+const HALF = 1.5;
 
-  for (const face of Object.keys(LAYOUT)) {
-    const [col, row] = LAYOUT[face];
+/* For each face: where its middle is, which way it points, and the two
+   directions its columns and rows run in. */
+const FRAME = {
+  U: { at: [0, HALF, 0], normal: [0, 1, 0], col: [1, 0, 0], row: [0, 0, 1] },
+  D: { at: [0, -HALF, 0], normal: [0, -1, 0], col: [1, 0, 0], row: [0, 0, -1] },
+  F: { at: [0, 0, HALF], normal: [0, 0, 1], col: [1, 0, 0], row: [0, -1, 0] },
+  B: { at: [0, 0, -HALF], normal: [0, 0, -1], col: [-1, 0, 0], row: [0, -1, 0] },
+  R: { at: [HALF, 0, 0], normal: [1, 0, 0], col: [0, 0, -1], row: [0, -1, 0] },
+  L: { at: [-HALF, 0, 0], normal: [-1, 0, 0], col: [0, 0, 1], row: [0, -1, 0] },
+};
+
+const add = (a, b, k = 1) => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
+
+function stickerQuad(face, index) {
+  const { at, col, row } = FRAME[face];
+  const c = (index % 3) - 1;
+  const r = Math.floor(index / 3) - 1;
+  const middle = add(add(at, col, c), row, r);
+  return {
+    middle,
+    corners: [
+      add(add(middle, col, -0.5), row, -0.5),
+      add(add(middle, col, 0.5), row, -0.5),
+      add(add(middle, col, 0.5), row, 0.5),
+      add(add(middle, col, -0.5), row, 0.5),
+    ],
+  };
+}
+
+const spinX = (p, a) => { const c = Math.cos(a), s = Math.sin(a);
+  return [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]; };
+const spinY = (p, a) => { const c = Math.cos(a), s = Math.sin(a);
+  return [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c]; };
+const spinZ = (p, a) => { const c = Math.cos(a), s = Math.sin(a);
+  return [p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2]]; };
+
+const SPIN = { x: spinX, y: spinY, z: spinZ };
+
+/* Which stickers a move takes with it, around which axis, and which way.
+   A layer is picked out by where a sticker is, not by any list of indices,
+   so a wide turn is just a more generous test. */
+export const TURNS = {
+  U: { axis: 'y', sign: -1, holds: (p) => p[1] > 0.9 },
+  D: { axis: 'y', sign: 1, holds: (p) => p[1] < -0.9 },
+  R: { axis: 'x', sign: -1, holds: (p) => p[0] > 0.9 },
+  L: { axis: 'x', sign: 1, holds: (p) => p[0] < -0.9 },
+  F: { axis: 'z', sign: -1, holds: (p) => p[2] > 0.9 },
+  B: { axis: 'z', sign: 1, holds: (p) => p[2] < -0.9 },
+  M: { axis: 'x', sign: 1, holds: (p) => Math.abs(p[0]) < 0.9 },
+  E: { axis: 'y', sign: 1, holds: (p) => Math.abs(p[1]) < 0.9 },
+  S: { axis: 'z', sign: -1, holds: (p) => Math.abs(p[2]) < 0.9 },
+  r: { axis: 'x', sign: -1, holds: (p) => p[0] > -0.9 },
+  l: { axis: 'x', sign: 1, holds: (p) => p[0] < 0.9 },
+  u: { axis: 'y', sign: -1, holds: (p) => p[1] > -0.9 },
+  d: { axis: 'y', sign: 1, holds: (p) => p[1] < 0.9 },
+  f: { axis: 'z', sign: -1, holds: (p) => p[2] > -0.9 },
+  b: { axis: 'z', sign: 1, holds: (p) => p[2] < 0.9 },
+  x: { axis: 'x', sign: -1, holds: () => true },
+  y: { axis: 'y', sign: -1, holds: () => true },
+  z: { axis: 'z', sign: -1, holds: () => true },
+};
+
+/** Split a token into the layer it turns and how far, e.g. R2 -> [R, 2]. */
+export function readToken(token) {
+  const parsed = /^([A-Za-z])(w?)('|2)?$/.exec(token || '');
+  if (!parsed) return null;
+  let base = parsed[1];
+  if (parsed[2] === 'w') base = base.toLowerCase();
+  if (!TURNS[base]) return null;
+  const quarters = parsed[3] === '2' ? 2 : parsed[3] === "'" ? -1 : 1;
+  return { base, quarters };
+}
+
+const CAMERA = 11;      // how far back the eye sits
+const LENS = 30;        // and how much it magnifies
+
+function project(p) {
+  const scale = LENS / (CAMERA - p[2]);
+  return [p[0] * scale, -p[1] * scale];
+}
+
+/* A light fixed to the camera, so turning the cube shades it the way a real
+   one catches the light instead of every face reading flat. */
+const LAMP = [0.32, 0.55, 0.77];
+
+function shade(hex, normal) {
+  const lit = Math.max(0, normal[0] * LAMP[0] + normal[1] * LAMP[1] + normal[2] * LAMP[2]);
+  const k = 0.55 + 0.45 * lit;
+  const n = parseInt(hex.slice(1), 16);
+  const mix = (v) => Math.round(Math.min(255, v * k));
+  return `rgb(${mix((n >> 16) & 255)},${mix((n >> 8) & 255)},${mix(n & 255)})`;
+}
+
+/**
+ * Draw the cube.
+ *   yaw, pitch  which way it is turned towards you, in radians
+ *   turn        { base, quarters, progress } to catch a move mid-flight
+ *   dim         fade the stickers the turn does not touch
+ */
+export function cubeSvg(state, options = {}) {
+  const yaw = options.yaw === undefined ? -0.62 : options.yaw;
+  const pitch = options.pitch === undefined ? -0.5 : options.pitch;
+  const turn = options.turn || null;
+  const spec = turn ? TURNS[turn.base] : null;
+  const sweep = spec
+    ? spec.sign * (turn.quarters || 1) * (Math.PI / 2) * (turn.progress || 0)
+    : 0;
+
+  const faces = [];
+  for (const face of FACES) {
     for (let i = 0; i < 9; i++) {
-      const x = (col + (i % 3)) * cell + inset;
-      const y = (row + Math.floor(i / 3)) * cell + inset;
-      const side = cell - inset * 2;
-      squares += `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" `
-        + `width="${side.toFixed(2)}" height="${side.toFixed(2)}" `
-        + `rx="${(cell * 0.14).toFixed(2)}" fill="${COLOURS[state[face][i]]}"/>`;
+      const { middle, corners } = stickerQuad(face, i);
+      const moving = spec ? spec.holds(middle) : false;
+
+      const place = (p) => {
+        let q = moving ? SPIN[spec.axis](p, sweep) : p;
+        return spinX(spinY(q, yaw), pitch);
+      };
+      const seen = corners.map(place);
+      const centre = place(middle);
+      let normal = FRAME[face].normal;
+      if (moving) normal = SPIN[spec.axis](normal, sweep);
+      normal = spinX(spinY(normal, yaw), pitch);
+
+      if (normal[2] <= 0.02) continue;                 // pointing away from us
+      faces.push({
+        depth: centre[2],
+        points: seen.map(project),
+        fill: shade(COLOURS[state[face][i]], normal),
+        faded: spec && options.dim && !moving,
+      });
     }
   }
-  return `<svg class="cube-net" viewBox="0 0 ${width} ${height}" `
-    + `xmlns="http://www.w3.org/2000/svg" role="img" `
-    + `aria-label="The cube, unfolded">`
-    + `<g stroke="rgba(0,0,0,.45)" stroke-width="${(cell * 0.05).toFixed(2)}">`
-    + squares + `</g></svg>`;
+
+  faces.sort((a, b) => a.depth - b.depth);             // far ones first
+
+  const body = [];
+  const tops = [];
+  for (const quad of faces) {
+    const outline = quad.points.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
+    body.push(`<polygon points="${outline}" fill="#0d0d10"/>`);
+    const middle = quad.points.reduce((a, p) => [a[0] + p[0] / 4, a[1] + p[1] / 4], [0, 0]);
+    const inner = quad.points
+      .map((p) => [middle[0] + (p[0] - middle[0]) * 0.84, middle[1] + (p[1] - middle[1]) * 0.84])
+      .map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
+    tops.push(`<polygon points="${inner}" fill="${quad.fill}"`
+      + ` stroke="${quad.fill}" stroke-width="1.1" stroke-linejoin="round"`
+      + (quad.faded ? ' opacity="0.4"' : '') + '/>');
+  }
+
+  // Painted in pairs so a nearer sticker's plastic never covers a further one.
+  const layers = faces.map((_, i) => body[i] + tops[i]).join('');
+  return `<svg class="cube3d" viewBox="-10 -10 20 20" xmlns="http://www.w3.org/2000/svg"`
+    + ` role="img" aria-label="A cube you can turn by dragging">${layers}</svg>`;
 }
 
 /** Which events this drawing is honest about. */

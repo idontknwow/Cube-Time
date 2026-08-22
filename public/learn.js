@@ -1,15 +1,45 @@
 // Every lesson in the app. Plain data so the content is easy to edit without
 // touching any logic. `algs` entries are {name, moves, note}.
 
+/* Every symbol, with the layer it turns. `demo` is the token drawn on the
+   little cube beside it; `plain` marks the six ordinary face turns. */
 export const NOTATION = [
-  ['F / B', 'Front and back faces, turned clockwise a quarter turn.'],
-  ['R / L', 'Right and left faces.'],
-  ['U / D', 'Up and down faces.'],
-  ["A prime, like R'", 'The same face, turned counter-clockwise instead.'],
-  ['A 2, like R2', 'A half turn. Direction does not matter.'],
-  ['Lowercase, like r', 'Turn that face plus the slice behind it (two layers).'],
-  ['M', 'The middle slice between L and R, turned the same way as L.'],
-  ['y', 'Rotate the whole cube the way U turns. x follows R, z follows F.'],
+  { symbol: 'F', demo: 'F', plain: true, name: 'Front',
+    what: 'The face pointing at you, turned clockwise a quarter turn.' },
+  { symbol: 'B', demo: 'B', plain: true, name: 'Back',
+    what: 'The face pointing away from you. Clockwise is judged from behind the cube, not from where you sit.' },
+  { symbol: 'U', demo: 'U', plain: true, name: 'Up',
+    what: 'The top layer. This is the one nearly every algorithm leans on.' },
+  { symbol: 'D', demo: 'D', plain: true, name: 'Down',
+    what: 'The bottom layer, clockwise as seen from underneath.' },
+  { symbol: 'L', demo: 'L', plain: true, name: 'Left',
+    what: 'The left face, clockwise as seen from the left of the cube.' },
+  { symbol: 'R', demo: 'R', plain: true, name: 'Right',
+    what: 'The right face. With U, it is half of everything you will ever learn.' },
+
+  { symbol: "R'", demo: "R'", name: 'Prime — the other way',
+    what: 'An apostrophe means the same face turned anticlockwise instead. Every letter can take one.' },
+  { symbol: 'R2', demo: 'R2', name: 'Double turn',
+    what: 'A half turn. Which way round you do it makes no difference to where the pieces end up.' },
+
+  { symbol: 'M', demo: 'M', name: 'Middle slice',
+    what: 'The column between L and R, turned the same way as L. Most of the fast last-layer edge algorithms are built from it.' },
+  { symbol: 'E', demo: 'E', name: 'Equator slice',
+    what: 'The layer between U and D, turned the same way as D.' },
+  { symbol: 'S', demo: 'S', name: 'Standing slice',
+    what: 'The layer between F and B, turned the same way as F.' },
+
+  { symbol: 'r', demo: 'r', name: 'Wide turn',
+    what: 'A lowercase letter — also written Rw — turns that face plus the slice behind it, two layers moving together.' },
+  { symbol: 'f', demo: 'f', name: 'Wide front',
+    what: 'The front face and the slice behind it. It appears all over OLL.' },
+
+  { symbol: 'x', demo: 'x', name: 'Rotate on R',
+    what: 'The whole cube tips forward, following R. Nothing is solved by it; you are just changing where you are looking from.' },
+  { symbol: 'y', demo: 'y', name: 'Rotate on U',
+    what: 'The whole cube spins, following U. Used to bring the next F2L pair to the front.' },
+  { symbol: 'z', demo: 'z', name: 'Rotate on F',
+    what: 'The whole cube rolls sideways, following F.' },
 ];
 
 export const LEVELS = [
