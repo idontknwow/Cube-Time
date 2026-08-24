@@ -64,6 +64,27 @@ in `server.py` would not have to move.
 Running it on your own Mac has none of this problem, because there really is
 one process with one lock.
 
+## When the deployment looks wrong
+
+The two things that have actually gone wrong, both of which look like bugs in
+the app and are not:
+
+**Friends are asked to sign in to Vercel.** Deployment Protection covers the
+whole site, so only you can open it -- which makes a public leaderboard
+pointless. Settings -> Deployment Protection -> Vercel Authentication ->
+Disabled. Check it in a private window, where you are not signed in to Vercel.
+
+**The site looks like an older version of itself.** The scripts have no version
+in their names, so a browser that fetched one before will happily keep it.
+`vercel.json` now asks for them to be revalidated every time, but a copy cached
+before that went out will still be there: reload the page once with the cache
+bypassed (Shift-Reload, or Cmd-Shift-R).
+
+To tell the two apart without guessing, open the **You** tab and look at the
+bottom: it prints the build the browser actually loaded, and says OUT OF DATE
+in red if it is an old one. That line answers "is this a stale script or a real
+bug" in one look, which is otherwise a slow thing to work out.
+
 ## What is in it
 
 **Timer.** Hold space (or press and hold the pad on a phone), release to start,
