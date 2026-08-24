@@ -163,17 +163,27 @@ def read_json(path, default):
         return default
 
 
-DEFAULT_DB = {"users": {}, "daily": {}, "races": {}}
+def normalise_db(db):
+    """Fill in every collection the app expects to find.
 
-
-def load_db():
-    db = read_json(DB_PATH, None)
+    Both transports run this -- the one here and the Vercel adapter, which
+    loads from Blob storage instead of a file. Adding a collection to one and
+    forgetting the other is how racing reached the live site raising
+    KeyError: 'races' on the first click, so there is one copy of it now.
+    """
     if not isinstance(db, dict):
-        db = json.loads(json.dumps(DEFAULT_DB))
+        db = {}
     db.setdefault("users", {})
     db.setdefault("daily", {})
     db.setdefault("races", {})
     return db
+
+
+DEFAULT_DB = normalise_db({})
+
+
+def load_db():
+    return normalise_db(read_json(DB_PATH, None))
 
 
 def save_db(db):
@@ -526,7 +536,10 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
         except Exception as err:  # never drop the connection on a bug
-            self.send_json({"error": "Server error: %s" % err}, 500)
+            # Name the type: a bare KeyError prints only the key, and
+            # "Server error: 'races'" tells nobody anything.
+            self.send_json({"error": "Server error: %s: %s"
+                            % (type(err).__name__, err)}, 500)
 
     def handle_static(self, route):
         if route in ("/", ""):

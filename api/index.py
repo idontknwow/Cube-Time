@@ -142,23 +142,25 @@ def http_get(url):
 # nobody is ever served a stale copy out of the CDN.
 
 def load_db():
-    empty = {"users": {}, "daily": {}}
+    """Newest saved copy from Blob storage, or an empty one.
+
+    server.normalise_db fills in the collections the app expects. Keeping that
+    in one place matters: this function used to list them itself, fell behind
+    when racing was added, and the live site answered the first click on
+    Create a race with KeyError: 'races'.
+    """
     if not TOKEN:
-        return empty
+        return server.normalise_db({})
     try:
         blobs = [b for b in blob_list(DB_PREFIX)
                  if b.get("pathname", "").endswith(".json")]
         if not blobs:
-            return empty
+            return server.normalise_db({})
         newest = max(blobs, key=lambda b: b.get("pathname", ""))
         db = json.loads(http_get(newest["url"]))
     except (BlobError, ValueError, OSError):
-        return empty
-    if not isinstance(db, dict):
-        return empty
-    db.setdefault("users", {})
-    db.setdefault("daily", {})
-    return db
+        return server.normalise_db({})
+    return server.normalise_db(db)
 
 
 def save_db(db):
@@ -213,4 +215,5 @@ class handler(server.Handler):
         except BrokenPipeError:
             pass
         except Exception as err:
-            self.send_json({"error": "Server error: %s" % err}, 500)
+            self.send_json({"error": "Server error: %s: %s"
+                            % (type(err).__name__, err)}, 500)
