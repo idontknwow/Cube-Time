@@ -589,6 +589,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.api_sync(body, db)
         if action == "daily":
             return self.api_daily_post(body, db)
+        if action == "forget":
+            return self.api_forget(body, db)
         if action == "race":
             return self.api_race(body, db)
         if action == "buy":
@@ -840,6 +842,28 @@ class Handler(BaseHTTPRequestHandler):
             "players": players,
             "you": me["name"] if me else None,
         }
+
+    def api_forget(self, body, db):
+        """Delete your own account, and only ever your own.
+
+        Signing in is not enough on its own -- the name has to be typed back,
+        so a stray request cannot take an account with it.
+        """
+        user = self.require_user(db)
+        key = user["name"].lower()
+        if (body.get("confirm") or "").strip().lower() != key:
+            raise ApiError(400, "Confirm with the account's own name to delete it.")
+
+        db["users"].pop(key, None)
+        # and out of everything still pointing at them
+        for day in db.get("daily", {}).values():
+            day.get("entries", {}).pop(key, None)
+        for code, race in list(db.get("races", {}).items()):
+            race.get("players", {}).pop(key, None)
+            if not race.get("players"):
+                db["races"].pop(code, None)
+        save_db(db)
+        return {"deleted": user["name"]}
 
     def api_race_get(self, query, db):
         code = (query.get("code") or [""])[0].strip().upper()
