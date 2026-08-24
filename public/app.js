@@ -546,6 +546,53 @@ function playNotation(host, token) {
   requestAnimationFrame(frame);
 }
 
+/* ------------------------------------------------------------------ admin */
+/* Only shown to whoever CUBE_ADMIN names. Lists the fastest solves on the
+   board, because a time nobody could have done is what a misclick looks
+   like, and they sort straight to the top. */
+
+async function renderAdmin() {
+  const panel = $('admin-panel');
+  if (!state.user || !state.user.admin) { panel.hidden = true; return; }
+  panel.hidden = false;
+
+  const box = $('admin');
+  const event = box.dataset.event || state.event || '333';
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const data = await api(`admin?event=${encodeURIComponent(event)}&limit=25`);
+    box.dataset.event = event;
+    const rows = data.solves.map((s) => {
+      const suspect = s.ms < data.floor * 1.5;
+      return `<tr class="${suspect ? 'suspect' : ''}">
+        <td class="num">${esc(fmt(s.ms, s.pen))}</td>
+        <td>${esc(s.user)}</td>
+        <td class="muted">${esc((s.at || '').replace('T', ' ').replace('Z', ''))}</td>
+        <td><button class="mini danger" data-drop="${esc(s.id)}"
+          data-who="${esc(s.user)}">Remove</button></td>
+      </tr>`;
+    }).join('');
+
+    box.innerHTML = `
+      <p class="muted">The fastest solves recorded, quickest first. Anything
+        under ${(data.floor * 1.5 / 1000).toFixed(2)}s is marked — that is the
+        shape a misclick takes. Removing one puts the record back to whatever
+        is left.</p>
+      <div class="filters">
+        <select id="admin-event">${Object.entries(data.events).map(([id, name]) =>
+          `<option value="${id}" ${id === event ? 'selected' : ''}>${esc(name)}</option>`).join('')}</select>
+      </div>
+      ${data.solves.length
+        ? `<table><thead><tr><th>Time</th><th>Cuber</th><th>When</th><th></th></tr></thead>
+           <tbody>${rows}</tbody></table>`
+        : '<p class="muted">No solves recorded for this event.</p>'}`;
+
+    $('admin-event').onchange = (e) => { box.dataset.event = e.target.value; renderAdmin(); };
+  } catch (err) {
+    box.innerHTML = `<p class="muted">${esc(err.message)}</p>`;
+  }
+}
+
 /* ----------------------------------------------------------------- racing */
 /* Both sides get the same start time from the server and run their own clock
    from it. Polling only carries what changes -- who joined, who is ready, who
@@ -926,11 +973,37 @@ async function renderDaily() {
         : `<button class="mini" id="daily-go">Use this scramble on the timer</button>
            <p class="muted">Your next solve on the timer gets submitted.</p>`;
 
+    const past = (data.past || []).length ? `
+      <h3 style="margin-top:1rem;font-size:.9rem">Recent winners</h3>
+      <ul class="winners">${data.past.map((d) => `
+        <li><span>${esc(d.date)}</span> <strong>${esc(d.winner)}</strong>
+          <span class="num">${esc(fmt(d.ms))}</span></li>`).join('')}</ul>` : '';
+
     $('daily').innerHTML = `
       <div class="daily-scramble">${esc(data.scramble)}</div>
       ${action}
+      <p class="muted">Whoever is fastest when the day closes takes
+        ${data.prize} cubies.</p>
+      <div class="row" style="margin:.5rem 0">
+        <button class="mini" id="daily-refresh">Refresh</button>
+        ${state.user && state.user.admin
+          ? '<button class="mini danger" id="daily-reset">Start a fresh day</button>' : ''}
+      </div>
       <h3 style="margin-top:1rem;font-size:.9rem">Today (${esc(data.date)})</h3>
-      ${standings}`;
+      ${standings}
+      ${past}`;
+
+    $('daily-refresh').onclick = renderDaily;
+    const reset = $('daily-reset');
+    if (reset) reset.onclick = async () => {
+      if (!confirm('Close today early, pay the leader, and draw a new scramble?')) return;
+      try {
+        await post('admin', { do: 'new_daily' });
+        toast('New day started.');
+        renderDaily();
+        renderLeaderboard();
+      } catch (err) { toast(err.message, true); }
+    };
 
     const go = $('daily-go');
     if (go) go.onclick = () => {
@@ -1237,7 +1310,7 @@ function show(view) {
   if (view !== 'learn') stopPlayer();
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('is-on', v.id === 'view-' + view));
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('is-on', t.dataset.view === view));
-  if (view === 'compete') { renderDaily(); renderLeaderboard(); renderRace(); }
+  if (view === 'compete') { renderDaily(); renderLeaderboard(); renderRace(); renderAdmin(); }
   if (view === 'learn') renderLearn();
   if (view === 'you') { renderYou(); showBuild(); }
 }
@@ -1352,6 +1425,19 @@ function init() {
   };
 
   // compete
+  $('admin').addEventListener('click', async (e) => {
+    const button = e.target.closest('[data-drop]');
+    if (!button) return;
+    const { drop, who } = button.dataset;
+    if (!confirm(`Remove that solve from ${who}'s record?`)) return;
+    try {
+      const out = await post('admin', { do: 'remove_solve', user: who, id: drop });
+      toast(`Removed ${fmt(out.removed.ms, out.removed.pen)} from ${out.user}.`);
+      renderAdmin();
+      renderLeaderboard();
+    } catch (err) { toast(err.message, true); }
+  });
+
   $('lb-event').onchange = renderLeaderboard;
   $('lb-metric').onchange = renderLeaderboard;
   document.addEventListener('click', (e) => {

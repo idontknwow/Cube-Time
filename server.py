@@ -63,6 +63,12 @@ FALLBACK_MIN = 5000
 # `python3 server.py --demo`, or CUBE_DEMO=1 in the environment.
 DEMO = os.environ.get("CUBE_DEMO") == "1"
 
+DAILY_PRIZE = 50            # cubies for winning a day, paid once it closes
+
+# Who may clear rubbish off the leaderboard. Set CUBE_ADMIN to a name, or
+# several separated by commas. Nobody is an admin unless named here.
+ADMINS = {n.strip().lower() for n in os.environ.get("CUBE_ADMIN", "").split(",") if n.strip()}
+
 RACE_TTL = 60 * 60          # a race is forgotten an hour after it was made
 RACE_COUNTDOWN = 3.0        # seconds between everyone being ready and GO
 RACE_MAX = 8
@@ -324,6 +330,7 @@ def public_user(user, full=False):
     }
     if full:
         out["owned"] = user.get("owned", {})
+        out["admin"] = user["name"].lower() in ADMINS
     return out
 
 
@@ -574,6 +581,8 @@ class Handler(BaseHTTPRequestHandler):
                 return {"shop": SHOP, "demo": DEMO}
             if action == "race":
                 return self.api_race_get(query, db)
+            if action == "admin":
+                return self.api_admin_get(query, db)
             raise ApiError(404, "Unknown endpoint.")
 
         body = self.read_json_body()
@@ -589,6 +598,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.api_sync(body, db)
         if action == "daily":
             return self.api_daily_post(body, db)
+        if action == "admin":
+            return self.api_admin(body, db)
         if action == "forget":
             return self.api_forget(body, db)
         if action == "race":
@@ -759,7 +770,38 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- daily battle -------------------------------------------------
 
+    def rank_entries(self, entries):
+        """Fastest first, anyone who did not finish last."""
+        rows = list(entries.items())
+        rows.sort(key=lambda kv: (kv[1].get("pen") == DNF,
+                                  kv[1]["ms"] + (2000 if kv[1].get("pen") == PLUS2 else 0)))
+        return rows
+
+    def settle_daily(self, db):
+        """Close out any day that has finished and pay its winner.
+
+        The prize is paid here, once, when the day is over -- not while it is
+        running. Leading at the moment you happen to enter is not winning.
+        """
+        today = today_key()
+        for date, day in sorted(db.get("daily", {}).items()):
+            if date >= today or day.get("settled"):
+                continue
+            day["settled"] = True
+            rows = [kv for kv in self.rank_entries(day.get("entries", {}))
+                    if kv[1].get("pen") != DNF]
+            if not rows:
+                continue
+            key, entry = rows[0]
+            day["winner"] = entry["name"]
+            day["winning_ms"] = entry["ms"]
+            champion = db["users"].get(key)
+            if champion:
+                champion["cubies"] = champion.get("cubies", 0) + DAILY_PRIZE
+                champion["daily_wins"] = champion.get("daily_wins", 0) + 1
+
     def daily_today(self, db):
+        self.settle_daily(db)
         key = today_key()
         daily = db["daily"].get(key)
         if not daily:
@@ -783,7 +825,24 @@ class Handler(BaseHTTPRequestHandler):
             "scramble": daily["scramble"],
             "standings": rows,
             "entered": bool(me and me["name"].lower() in daily["entries"]),
+            "prize": DAILY_PRIZE,
+            "past": self.recent_results(db),
         }
+
+    def recent_results(self, db):
+        """The last few days that have been settled, newest first."""
+        out = []
+        for date in sorted(db.get("daily", {}), reverse=True):
+            day = db["daily"][date]
+            if not day.get("settled") or not day.get("winner"):
+                continue
+            # day["date"] not the storage key: a day restarted by an admin is
+            # archived under a key with a suffix, which is not a date.
+            out.append({"date": day.get("date", date), "winner": day["winner"],
+                        "ms": day.get("winning_ms")})
+            if len(out) == 5:
+                break
+        return out
 
     def api_daily_get(self, db):
         daily = self.daily_today(db)
@@ -802,8 +861,6 @@ class Handler(BaseHTTPRequestHandler):
                                  "pen": solve["pen"], "at": solve["at"]}
         user["cubies"] = user.get("cubies", 0) + 10
         view = self.daily_view(daily, user, db)
-        if view["standings"] and view["standings"][0]["name"] == user["name"]:
-            user["daily_wins"] = user.get("daily_wins", 0) + 1
         save_db(db)
         view["user"] = public_user(user, full=True)
         return view
@@ -842,6 +899,92 @@ class Handler(BaseHTTPRequestHandler):
             "players": players,
             "you": me["name"] if me else None,
         }
+
+    # ---- clearing rubbish off the board --------------------------------
+
+    def is_admin(self, user):
+        return bool(user) and user["name"].lower() in ADMINS
+
+    def require_admin(self, db):
+        user = self.require_user(db)
+        if not self.is_admin(user):
+            raise ApiError(403, "That is for an admin. Set CUBE_ADMIN to your name.")
+        return user
+
+    def api_admin_get(self, query, db):
+        """The fastest solves on the board, so the implausible ones are easy
+        to find. Sorted fastest first, because that is where they hide."""
+        self.require_admin(db)
+        event = (query.get("event") or ["333"])[0]
+        if event not in EVENTS:
+            raise ApiError(400, "Unknown event.")
+        try:
+            limit = max(1, min(100, int((query.get("limit") or ["25"])[0])))
+        except ValueError:
+            limit = 25
+
+        found = []
+        for key, user in db["users"].items():
+            for solve in user.get("solves", []):
+                if solve.get("event", "333") != event:
+                    continue
+                found.append({
+                    "user": user["name"],
+                    "id": solve.get("id", ""),
+                    "ms": solve["ms"],
+                    "pen": solve.get("pen", OK),
+                    "at": solve.get("at", ""),
+                    "scramble": solve.get("scramble", ""),
+                })
+        found.sort(key=lambda s: s["ms"])
+        return {"event": event, "floor": minimum_for(event),
+                "solves": found[:limit], "events": EVENTS}
+
+    def api_admin(self, body, db):
+        admin = self.require_admin(db)
+        doing = body.get("do")
+
+        if doing == "remove_solve":
+            key = (body.get("user") or "").strip().lower()
+            target = db["users"].get(key)
+            if target is None:
+                raise ApiError(404, "No cuber by that name.")
+            solve_id = (body.get("id") or "")[:32]
+            solves = target.get("solves", [])
+            gone = next((s for s in solves if s.get("id") == solve_id), None)
+            if gone is None:
+                raise ApiError(404, "No such solve.")
+            target["solves"] = [s for s in solves if s.get("id") != solve_id]
+            recompute_prs(target, gone.get("event", "333"))
+            target["cubies"] = max(0, target.get("cubies", 0) - 1)
+            save_db(db)
+            return {"removed": gone, "user": target["name"],
+                    "prs": target.get("prs", {})}
+
+        if doing == "new_daily":
+            # Start today over: settle what is there, then draw a fresh
+            # scramble so a spoiled day is not stuck until midnight.
+            self.settle_daily(db)
+            key = today_key()
+            day = db["daily"].get(key) or {}
+            rows = [kv for kv in self.rank_entries(day.get("entries", {}))
+                    if kv[1].get("pen") != DNF]
+            if rows and not day.get("settled"):
+                winner_key, entry = rows[0]
+                champion = db["users"].get(winner_key)
+                if champion:
+                    champion["cubies"] = champion.get("cubies", 0) + DAILY_PRIZE
+                    champion["daily_wins"] = champion.get("daily_wins", 0) + 1
+                day["winner"] = entry["name"]
+                day["winning_ms"] = entry["ms"]
+                day["settled"] = True
+                db["daily"][key + "-" + secrets.token_hex(2)] = day
+            db["daily"][key] = {"date": key, "entries": {},
+                                "scramble": scramble_333(random.Random())}
+            save_db(db)
+            return self.daily_view(db["daily"][key], admin, db)
+
+        raise ApiError(400, "Unknown admin action.")
 
     def api_forget(self, body, db):
         """Delete your own account, and only ever your own.

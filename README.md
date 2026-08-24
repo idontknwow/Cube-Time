@@ -127,7 +127,9 @@ All the content lives in `public/learn.js` as plain data, so it is easy to edit.
 
 **Compete.** A public leaderboard by event and by metric, personal records on
 every profile, and a daily battle where everyone gets the same scramble and one
-attempt.
+attempt. Whoever is fastest when the day closes takes 50 cubies and a win on
+their profile. The day is settled once, after it ends -- leading at the moment
+you happen to enter is not winning, which is what it used to count.
 
 **Racing.** Create a race and share the four-character code. Everyone sees the
 same scramble in the lobby, scrambles their own cube, and presses ready; three
@@ -208,6 +210,26 @@ cost) and a rule in the cosmetics section at the bottom of `public/styles.css`
 changes how a face is drawn rather than what colour it is.
 The server only ever stores which id you are wearing — what it looks like is
 entirely the stylesheet's business.
+
+## Keeping the board honest
+
+Solves that are too fast to be real are refused outright, but a time that
+squeaks past the floor still lands on the leaderboard. Name yourself an admin
+and you can take those off it:
+
+    CUBE_ADMIN=yourname python3 server.py
+
+or set `CUBE_ADMIN` in the Vercel dashboard for the live site. Several names
+can be given, separated by commas. Nobody is an admin unless named there, and
+the admin panel on the Compete tab is invisible to everyone else.
+
+It lists the fastest solves recorded, quickest first -- which is exactly where
+an implausible one sits -- and marks anything suspiciously close to the floor.
+Removing a solve recalculates that person's records from what is left, so the
+leaderboard corrects itself.
+
+The same panel can close the day early and draw a fresh scramble, for when a
+daily battle is spoiled and waiting until midnight is no use.
 
 ## Demo mode
 

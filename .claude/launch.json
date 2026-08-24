@@ -18,7 +18,10 @@
         "--demo"
       ],
       "port": 8124,
-      "autoPort": true
+      "autoPort": true,
+      "env": {
+        "CUBE_ADMIN": "nancy"
+      }
     }
   ]
 }

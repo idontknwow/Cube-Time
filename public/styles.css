@@ -494,3 +494,18 @@ body.timing .stats, body.timing .session, body.timing .after { visibility: hidde
   font-family: ui-monospace, Menlo, monospace; margin: .5rem 0 0;
 }
 .build.stale { color: var(--bad); font-weight: 600; }
+
+/* ---- daily winners and the admin table -------------------------------- */
+
+.winners { list-style: none; margin: .4rem 0 0; padding: 0; }
+.winners li {
+  display: flex; gap: .6rem; align-items: baseline; font-size: .88rem;
+  padding: .25rem 0; border-bottom: 1px solid var(--line);
+}
+.winners li:last-child { border-bottom: 0; }
+.winners li span:first-child { color: var(--muted); min-width: 6.2rem; }
+.winners .num { margin-left: auto; font-family: ui-monospace, Menlo, monospace; }
+
+#admin-panel { border-color: var(--warn); }
+#admin tr.suspect td { color: var(--bad); }
+#admin table { margin-top: .5rem; }
